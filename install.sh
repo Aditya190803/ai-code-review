@@ -10,6 +10,31 @@ if ! command -v bun &> /dev/null; then
 fi
 
 INSTALL_DIR="$HOME/.ai-code-review"
+EXPECTED_REMOTE_SUFFIX="/Aditya190803/ai-code-review.git"
+REPO_URL="https://github.com/Aditya190803/ai-code-review.git"
+
+needs_fresh_clone=0
+if [ -d "$INSTALL_DIR" ]; then
+    if [ ! -d "$INSTALL_DIR/.git" ]; then
+        echo "⚠️ Existing directory is not a git repository: $INSTALL_DIR"
+        needs_fresh_clone=1
+    elif [ ! -f "$INSTALL_DIR/app.tsx" ] || [ ! -f "$INSTALL_DIR/package.json" ]; then
+        echo "⚠️ Existing installation does not look like this Bun CLI project."
+        needs_fresh_clone=1
+    else
+        origin_url=$(git -C "$INSTALL_DIR" remote get-url origin 2>/dev/null || true)
+        if [[ "$origin_url" != *"$EXPECTED_REMOTE_SUFFIX" ]]; then
+            echo "⚠️ Existing installation points to a different repository: $origin_url"
+            needs_fresh_clone=1
+        fi
+    fi
+fi
+
+if [ "$needs_fresh_clone" -eq 1 ]; then
+    backup_dir="$INSTALL_DIR.backup.$(date +%Y%m%d-%H%M%S)"
+    echo "🗂️ Backing up current installation to $backup_dir"
+    mv "$INSTALL_DIR" "$backup_dir"
+fi
 
 if [ -d "$INSTALL_DIR" ]; then
     echo "🔄 Updating existing installation in $INSTALL_DIR..."
@@ -20,7 +45,7 @@ if [ -d "$INSTALL_DIR" ]; then
     git stash pop --quiet 2>/dev/null || true
 else
     echo "📦 Cloning repository to $INSTALL_DIR..."
-    git clone https://github.com/Aditya190803/ai-code-review.git "$INSTALL_DIR"
+    git clone "$REPO_URL" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 fi
 
@@ -29,9 +54,19 @@ echo "📦 Installing dependencies..."
 bun install
 
 echo "🔗 Linking globally..."
-cat << 'EOF' > ai-review-wrapper.sh
+cat << EOF > ai-review-wrapper.sh
 #!/bin/bash
-bun run "$HOME/.ai-code-review/app.tsx" "$@"
+set -euo pipefail
+
+INSTALL_DIR="$INSTALL_DIR"
+
+if [ ! -f "\$INSTALL_DIR/app.tsx" ]; then
+    echo "error: Module not found \"\$INSTALL_DIR/app.tsx\""
+    echo "This installation looks incomplete or outdated. Re-run install.sh."
+    exit 1
+fi
+
+exec bun run --cwd "\$INSTALL_DIR" app.tsx "\$@"
 EOF
 chmod +x ai-review-wrapper.sh
 
