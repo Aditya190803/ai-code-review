@@ -1,0 +1,41 @@
+{
+  "name": "ai-code-review",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "ai-review": "./dist/app.js"
+  },
+  "scripts": {
+    "dev": "bun run app.tsx",
+    "build": "bun build app.tsx --outdir=dist --target=node --external react-devtools-core",
+    "lint": "bunx tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^25.3.0",
+    "@types/react": "^19.2.14"
+  },
+  "peerDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.46",
+    "@ai-sdk/google": "^3.0.30",
+    "@ai-sdk/openai-compatible": "^2.0.30",
+    "ai": "^6.0.97",
+    "clipboardy": "^5.3.0",
+    "dotenv": "^17.3.1",
+    "fs-extra": "^11.3.3",
+    "ink": "^6.8.0",
+    "ink-select-input": "^6.2.0",
+    "ink-text-input": "^6.0.0",
+    "marked": "^17.0.3",
+    "marked-terminal": "^7.3.0",
+    "react": "^19.2.4",
+    "simple-git": "^3.32.2",
+    "ts-morph": "^27.0.2",
+    "zod": "^4.3.6"
+  }
+}
