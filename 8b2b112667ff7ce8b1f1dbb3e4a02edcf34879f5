@@ -1,0 +1,23 @@
+install.sh
+  19ff5ca48fdd2d2f 13-14,16,18-37,48,57,59-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "8b2b112667ff7ce8b1f1dbb3e4a02edcf34879f5",
+  "prompts": {
+    "19ff5ca48fdd2d2f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c8f3e-bed6-7480-be32-d2fb2b16f944",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Aditya Mer <aditya.mer@somaiya.edu>",
+      "messages": [],
+      "total_additions": 38,
+      "total_deletions": 3,
+      "accepted_lines": 38,
+      "overriden_lines": 0
+    }
+  }
+}
