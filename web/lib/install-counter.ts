@@ -1,7 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
-const DATA_DIR = join(process.cwd(), ".data");
+const DATA_DIR =
+  process.env.INSTALL_COUNTER_DIR ??
+  (process.env.NODE_ENV === "production" ? join(tmpdir(), "ai-code-review") : join(process.cwd(), ".data"));
 const COUNTER_FILE = join(DATA_DIR, "install-count.json");
 
 interface InstallCounterState {
