@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { GithubIcon } from "./components/GithubIcon";
 import { TerminalDemo } from "./components/TerminalDemo";
 import { motion } from "framer-motion";
@@ -222,12 +222,35 @@ function Footer() {
 
 export default function Home() {
   const [copied, setCopied] = useState(false);
+  const mountedRef = useRef(true);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      if (copyTimerRef.current) {
+        clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText("curl -sS https://ai-review.adityamer.dev/install.sh | bash").catch(console.error);
-    setCopied(true);
     const COPY_TIMEOUT = 2000;
-    setTimeout(() => setCopied(false), COPY_TIMEOUT);
+    navigator.clipboard.writeText("curl -sS https://ai-review.adityamer.dev/install.sh | bash")
+      .then(() => {
+        if (!mountedRef.current) return;
+
+        setCopied(true);
+        if (copyTimerRef.current) {
+          clearTimeout(copyTimerRef.current);
+        }
+        copyTimerRef.current = setTimeout(() => {
+          if (mountedRef.current) {
+            setCopied(false);
+          }
+        }, COPY_TIMEOUT);
+      })
+      .catch(console.error);
   };
 
   return (

@@ -24,6 +24,22 @@ const IssueSchema = z.object({
     })),
 });
 
+function toError(error: unknown): Error {
+    if (error instanceof Error) {
+        return error;
+    }
+
+    if (typeof error === 'string') {
+        return new Error(error);
+    }
+
+    try {
+        return new Error(JSON.stringify(error));
+    } catch {
+        return new Error('Unknown error');
+    }
+}
+
 // ── Rate limit retry helper ──
 async function withRetry<T>(
     fn: () => Promise<T>,
@@ -245,7 +261,7 @@ function handleDetectedIssues(runtime: ScanRuntime, file: string, issues: ScanIs
 }
 
 function handleTaskFailure(runtime: ScanRuntime, file: string, error: unknown): ScanIssue[] {
-    const err = error as Error;
+    const err = toError(error);
     const errMsg = err.message.slice(0, 100);
 
     if (err.name === 'AbortError') {
@@ -275,27 +291,50 @@ async function triageFile(runtime: ScanRuntime, file: string, contentToSend: str
     }
 }
 
-async function runDeepScan(runtime: ScanRuntime, file: string, contentToSend: string, projectContext: string): Promise<ScanIssue[]> {
+async function runDeepScan(runtime: ScanRuntime, file: string, contentToSend: string, projectContext: string, abortSignal: AbortSignal): Promise<ScanIssue[]> {
     const { object: parsed } = await withRetry(async () => {
         return await generateObject({
             model: getModel(runtime.config),
             schema: IssueSchema,
             system: getScanSystemPrompt(runtime.config),
             prompt: `File: ${file}\nContext: ${contentToSend}\n\nProject context:\n${projectContext || 'No additional project context available.'}\n\nContents/Diff:\n\`\`\`\n${contentToSend}\n\`\`\``,
-            abortSignal: runtime.abortSignal,
+            abortSignal,
         });
     });
 
     return parseScanIssues(parsed, file);
 }
 
+function createTaskAbortSignal(runtimeAbortSignal: AbortSignal | undefined, timeoutMs: number) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    const abortHandler = () => controller.abort();
+
+    if (runtimeAbortSignal) {
+        if (runtimeAbortSignal.aborted) {
+            controller.abort();
+        } else {
+            runtimeAbortSignal.addEventListener('abort', abortHandler, { once: true });
+        }
+    }
+
+    return {
+        signal: controller.signal,
+        cleanup: () => {
+            clearTimeout(timeout);
+            if (runtimeAbortSignal) {
+                runtimeAbortSignal.removeEventListener('abort', abortHandler);
+            }
+        },
+    };
+}
+
 function createFileTask(runtime: ScanRuntime, file: string, content: string): () => Promise<ScanIssue[]> {
     return async () => {
         if (runtime.abortSignal?.aborted) return [];
 
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 20_000);
-        const abortHandler = () => controller.abort();
+        const { signal, cleanup } = createTaskAbortSignal(runtime.abortSignal, 20_000);
 
         try {
             const context = buildFileTaskContext(runtime, file, content);
@@ -319,25 +358,18 @@ function createFileTask(runtime: ScanRuntime, file: string, content: string): ()
                 // Ignore diff errors and fall back to extracted code.
             }
 
-            if (runtime.abortSignal) {
-                runtime.abortSignal.addEventListener('abort', abortHandler, { once: true });
-            }
-
-            const score = await triageFile(runtime, file, contentToSend);
+            const score = await triageFile({ ...runtime, abortSignal: signal }, file, contentToSend);
             if (typeof score === 'number' && score < 3) {
                 return handleTriagedSkip(runtime, file, context, score);
             }
 
-            const issues = await runDeepScan(runtime, file, contentToSend, context.projectContext);
+            const issues = await runDeepScan(runtime, file, contentToSend, context.projectContext, signal);
             storeCacheEntry(runtime, file, context, issues);
             return handleDetectedIssues(runtime, file, issues);
         } catch (e) {
             return handleTaskFailure(runtime, file, e);
         } finally {
-            clearTimeout(timeout);
-            if (runtime.abortSignal) {
-                runtime.abortSignal.removeEventListener('abort', abortHandler);
-            }
+            cleanup();
         }
     };
 }

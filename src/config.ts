@@ -150,9 +150,11 @@ export function getModel(config: AppConfig) {
     const providerDefinition = getProviderDefinition(normalized.provider);
     const baseURL =
         normalized.providerOptions?.[normalized.provider]?.baseURL ||
-        providerDefinition?.baseURL ||
-        getProviderDefinition('openai')?.baseURL ||
-        'https://api.openai.com/v1';
+        providerDefinition?.baseURL;
+
+    if (!baseURL) {
+        throw new Error(`Provider "${normalized.provider}" does not have a base URL configured.`);
+    }
 
     const openaiCompat = createOpenAICompatible({
         name: normalized.provider,

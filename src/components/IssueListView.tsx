@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import type { ScanIssue } from '../types.js';
@@ -111,20 +111,26 @@ export const IssueListView = ({
         () => getIssueListItems(issues, state),
         [issues, state]
     );
+    const listItemsLengthRef = useRef(listItems.length);
     const truncateLabel = (label: string, maxWidth: number) => {
         if (label.length <= maxWidth) return label;
         return `${label.slice(0, Math.max(0, maxWidth - 1))}…`;
     };
 
+    useEffect(() => {
+        listItemsLengthRef.current = listItems.length;
+    }, [listItems.length]);
+
     // Safety clamp
     useEffect(() => {
-        if (state.selectedIndex >= listItems.length) {
+        const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
+        if (state.selectedIndex >= listItemsLengthRef.current) {
             onStateChange((prev) => ({
                 ...prev,
-                selectedIndex: Math.max(0, listItems.length - 1),
+                selectedIndex: lastIndex,
             }));
         }
-    }, [listItems.length, onStateChange, state.selectedIndex]);
+    }, [onStateChange, state.selectedIndex]);
 
     const footerRows = state.isFiltering ? 0 : isCramped ? 4 : isNarrow ? 5 : 4;
     const headerRows = state.isFiltering ? 4 : 5;
@@ -143,12 +149,13 @@ export const IssueListView = ({
 
     useMouseWheel((direction) => {
         if (state.isFiltering) return;
+        const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
 
         onStateChange((prev) => ({
             ...prev,
             selectedIndex: direction === 'up'
                 ? Math.max(0, prev.selectedIndex - 1)
-                : Math.min(listItems.length - 1, prev.selectedIndex + 1),
+                : Math.min(lastIndex, prev.selectedIndex + 1),
         }));
     }, listItems.length > 0);
 
@@ -213,15 +220,18 @@ export const IssueListView = ({
             onStateChange((prev) => ({ ...prev, selectedIndex: Math.max(0, prev.selectedIndex - 1) }));
         } else if (key.downArrow) {
             if (!allowArrow('down')) return;
-            onStateChange((prev) => ({ ...prev, selectedIndex: Math.min(listItems.length - 1, prev.selectedIndex + 1) }));
+            const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
+            onStateChange((prev) => ({ ...prev, selectedIndex: Math.min(lastIndex, prev.selectedIndex + 1) }));
         } else if (key.pageUp) {
             onStateChange((prev) => ({ ...prev, selectedIndex: Math.max(0, prev.selectedIndex - limit) }));
         } else if (key.pageDown) {
-            onStateChange((prev) => ({ ...prev, selectedIndex: Math.min(listItems.length - 1, prev.selectedIndex + limit) }));
+            const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
+            onStateChange((prev) => ({ ...prev, selectedIndex: Math.min(lastIndex, prev.selectedIndex + limit) }));
         } else if (key.home) {
             onStateChange((prev) => ({ ...prev, selectedIndex: 0 }));
         } else if (key.end) {
-            onStateChange((prev) => ({ ...prev, selectedIndex: Math.max(0, listItems.length - 1) }));
+            const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
+            onStateChange((prev) => ({ ...prev, selectedIndex: lastIndex }));
         } else if (key.rightArrow) {
             const item = listItems[state.selectedIndex];
             if (!item) return;
@@ -234,7 +244,7 @@ export const IssueListView = ({
                     }));
                 } else {
                     const nextIndex = state.selectedIndex + 1;
-                    if (nextIndex < listItems.length) {
+                    if (nextIndex < listItemsLengthRef.current) {
                         onStateChange((prev) => ({ ...prev, selectedIndex: nextIndex }));
                     }
                 }
@@ -302,7 +312,7 @@ export const IssueListView = ({
                                 Math.max(16, contentWidth - 2)
                             );
                             return (
-                                <Box key={`file-${item.file}`}>
+                                <Box key={`file-${globalIndex}-${item.file}`}>
                                     {isSelected ? (
                                         <Text color="white" bold>{`› ${label}`}</Text>
                                     ) : (
@@ -316,7 +326,7 @@ export const IssueListView = ({
                             const title = truncateLabel(item.issue.title, Math.max(12, contentWidth - 9));
 
                             return (
-                                <Box key={`issue-${item.file}-${item.issue.line}-${item.issue.title}`}>
+                                <Box key={`issue-${globalIndex}-${item.file}-${item.issue.line}-${item.issue.title}`}>
                                     {isSelected ? (
                                         <Text color="white" bold>
                                             {'› '}
