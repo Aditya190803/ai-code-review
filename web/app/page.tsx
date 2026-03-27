@@ -1,10 +1,14 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { GithubIcon } from "./components/GithubIcon";
-import { TerminalDemo } from "./components/TerminalDemo";
 import { motion } from "framer-motion";
 import { Terminal, Copy, Check, Sparkles, Code2, BrainCircuit, Shield } from "lucide-react";
+
+const TerminalDemo = dynamic(() => import("./components/TerminalDemo").then((mod) => mod.TerminalDemo), {
+  ssr: false,
+});
 
 const PROVIDERS = ['OpenAI', 'Anthropic', 'Gemini', 'Mistral', 'Groq', 'NVIDIA NIM', 'Together', 'Cerebras', 'OpenRouter', 'xAI'];
 
@@ -71,7 +75,13 @@ function CopyCommand({ copied, onCopy }: { copied: boolean; onCopy: () => void }
   );
 }
 
-function HeroSection({ copied, onCopy }: { copied: boolean; onCopy: () => void }) {
+function HeroSection({
+  copied,
+  onCopy,
+}: {
+  copied: boolean;
+  onCopy: () => void;
+}) {
   return (
     <section className="mb-20 flex w-full max-w-5xl flex-col items-center text-center sm:mb-28">
       <motion.h1
