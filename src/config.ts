@@ -83,7 +83,8 @@ export async function saveConfig(config: AppConfig) {
 
 export async function fetchModels(
     provider: string,
-    apiKey: string
+    apiKey: string,
+    signal?: AbortSignal
 ): Promise<{ label: string; value: string }[]> {
     try {
         const definition = getProviderDefinition(provider);
@@ -92,7 +93,7 @@ export async function fetchModels(
         }
 
         const fetchAndParse = async (url: string, headers: Record<string, string>) => {
-            const res = await fetch(url, { headers });
+            const res = await fetch(url, { headers, signal });
             if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
             return await res.json();
         };

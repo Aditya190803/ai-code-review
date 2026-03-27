@@ -44,19 +44,51 @@ function toError(error: unknown): Error {
 async function withRetry<T>(
     fn: () => Promise<T>,
     maxRetries = 3,
-    baseDelay = 1000
+    baseDelay = 1000,
+    abortSignal?: AbortSignal
 ): Promise<T> {
+    const createAbortError = () => {
+        const error = new Error('The operation was aborted');
+        error.name = 'AbortError';
+        return error;
+    };
+
+    const wait = (delayMs: number) => new Promise<void>((resolve, reject) => {
+        if (abortSignal?.aborted) {
+            reject(createAbortError());
+            return;
+        }
+
+        const onAbort = () => {
+            cleanup();
+            reject(createAbortError());
+        };
+
+        const timeoutId = setTimeout(() => {
+            cleanup();
+            resolve();
+        }, delayMs);
+
+        const cleanup = () => {
+            clearTimeout(timeoutId);
+            abortSignal?.removeEventListener('abort', onAbort);
+        };
+
+        abortSignal?.addEventListener('abort', onAbort, { once: true });
+    });
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
             return await fn();
         } catch (e: unknown) {
             if (attempt === maxRetries) throw e;
+            if (abortSignal?.aborted) throw createAbortError();
             const error = e as { message?: string; status?: number; statusCode?: number };
             const msg = error.message?.toLowerCase() || '';
             const status = error.status || error.statusCode;
             if (status === 429 || msg.includes('rate') || msg.includes('too many requests')) {
                 const delay = baseDelay * Math.pow(2, attempt);
-                await new Promise(r => setTimeout(r, delay));
+                await wait(delay);
             } else {
                 throw e; // Don't retry non-rate-limit errors
             }
@@ -275,14 +307,14 @@ function handleTaskFailure(runtime: ScanRuntime, file: string, error: unknown): 
     return [] as ScanIssue[];
 }
 
-async function triageFile(runtime: ScanRuntime, file: string, contentToSend: string): Promise<number | null> {
+async function triageFile(runtime: ScanRuntime, file: string, contentToSend: string, abortSignal?: AbortSignal): Promise<number | null> {
     try {
         const { object: triage } = await generateObject({
             model: getModel(runtime.config),
             schema: z.object({ score: z.number().min(1).max(10) }),
             system: TRIAGE_SYSTEM_PROMPT,
             prompt: `File: ${file}\n\n${contentToSend}`,
-            abortSignal: runtime.abortSignal,
+            abortSignal,
         });
 
         return triage.score;
@@ -300,7 +332,7 @@ async function runDeepScan(runtime: ScanRuntime, file: string, contentToSend: st
             prompt: `File: ${file}\nContext: ${contentToSend}\n\nProject context:\n${projectContext || 'No additional project context available.'}\n\nContents/Diff:\n\`\`\`\n${contentToSend}\n\`\`\``,
             abortSignal,
         });
-    });
+    }, 3, 1000, abortSignal);
 
     return parseScanIssues(parsed, file);
 }
@@ -358,7 +390,11 @@ function createFileTask(runtime: ScanRuntime, file: string, content: string): ()
                 // Ignore diff errors and fall back to extracted code.
             }
 
-            const score = await triageFile({ ...runtime, abortSignal: signal }, file, contentToSend);
+            const score = await triageFile(runtime, file, contentToSend, signal);
+            if (signal.aborted) {
+                return [];
+            }
+
             if (typeof score === 'number' && score < 3) {
                 return handleTriagedSkip(runtime, file, context, score);
             }

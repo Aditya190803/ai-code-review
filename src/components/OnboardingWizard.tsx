@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { fetchModels, getProviderLabels, normalizeConfig } from '../config.js';
@@ -57,7 +57,9 @@ export const OnboardingWizard = ({
     const [uiLanguage, setUiLanguage] = useState(normalizedInitial.uiLanguage || DEFAULT_UI_LANGUAGE);
     const [reviewTone, setReviewTone] = useState(normalizedInitial.reviewTone || 'strict');
     const [isFetching, setIsFetching] = useState(false);
+    const [fetchReturnStep, setFetchReturnStep] = useState<Exclude<WizardStep, 'fetching_models'>>('api_key');
     const [error, setError] = useState<string | null>(null);
+    const fetchAbortControllerRef = useRef<AbortController | null>(null);
     const { rows } = useTerminalSize();
     const { isSearching, setIsSearching, searchQuery, setSearchQuery } = useSearch();
 
@@ -79,15 +81,24 @@ export const OnboardingWizard = ({
         }));
     };
 
-    const tryFetch = async (nextProvider: string, key: string) => {
+    const tryFetch = async (nextProvider: string, key: string, returnStep: Exclude<WizardStep, 'fetching_models'>) => {
         setError(null);
         setIsFetching(true);
+        setFetchReturnStep(returnStep);
         setStep('fetching_models');
+
+        fetchAbortControllerRef.current?.abort();
+        const abortController = new AbortController();
+        fetchAbortControllerRef.current = abortController;
 
         const providerConfig = getProviderDefinition(nextProvider);
         const fallbackModel = providerConfig?.defaultModel || 'default';
         try {
-            const list = await fetchModels(nextProvider, key);
+            const list = await fetchModels(nextProvider, key, abortController.signal);
+            if (abortController.signal.aborted) {
+                return;
+            }
+
             const nextModels = list.length > 0 ? list : [{ label: `Fallback model: ${fallbackModel}`, value: fallbackModel }];
             setModels(nextModels);
 
@@ -98,12 +109,23 @@ export const OnboardingWizard = ({
 
             setSelectedModel(preferredModel);
         } catch (e) {
+            if (abortController.signal.aborted || (e instanceof Error && e.name === 'AbortError')) {
+                return;
+            }
+
             const message = e instanceof Error ? e.message : 'Failed to fetch model list.';
             setError(message);
             setModels([{ label: `Fallback model: ${fallbackModel}`, value: fallbackModel }]);
             setSelectedModel(fallbackModel);
         } finally {
-            setStep('model');
+            if (fetchAbortControllerRef.current === abortController) {
+                fetchAbortControllerRef.current = null;
+            }
+
+            if (!abortController.signal.aborted) {
+                setStep('model');
+            }
+
             setIsFetching(false);
         }
     };
@@ -120,6 +142,13 @@ export const OnboardingWizard = ({
         }
 
         if (key.leftArrow && step !== 'provider') {
+            if (step === 'fetching_models') {
+                fetchAbortControllerRef.current?.abort();
+                setIsFetching(false);
+                setStep(fetchReturnStep);
+                return;
+            }
+
             if (step === 'provider_key_choice') setStep('provider');
             else if (step === 'api_key') setStep('provider');
             else if (step === 'model') setStep('provider');
@@ -188,7 +217,7 @@ export const OnboardingWizard = ({
                         ]}
                         onSelect={(item) => {
                             if (item.value === 'keep') {
-                                void tryFetch(provider, apiKey);
+                                void tryFetch(provider, apiKey, 'provider_key_choice');
                             } else {
                                 setApiKey('');
                                 setStep('api_key');
@@ -222,7 +251,7 @@ export const OnboardingWizard = ({
                                 return;
                             }
                             setApiKey(trimmed);
-                            void tryFetch(provider, trimmed);
+                            void tryFetch(provider, trimmed, 'api_key');
                         }}
                     />
                 </Box>
