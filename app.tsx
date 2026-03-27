@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { render } from 'ink';
-import { loadConfig, normalizeConfig, saveConfig } from './src/config.js';
+import { Box, Text, render, useApp } from 'ink';
+import { loadConfig, saveConfig } from './src/config.js';
 import { ReviewDashboard } from './src/components/ReviewDashboard.js';
 import { OnboardingWizard } from './src/components/OnboardingWizard.js';
 import { FullScreenTerminal, GlobalMouseHandler } from './src/components/TUIUtils.js';
@@ -49,7 +49,9 @@ if (isCI) {
 } else {
     // ── Interactive TUI Mode ──
     const Root = () => {
-        const [config, setConfig] = useState(() => normalizeConfig());
+        const { exit } = useApp();
+        const [config, setConfig] = useState<AppConfig | null>(null);
+        const [isConfigLoaded, setIsConfigLoaded] = useState(false);
         const [isConfiguring, setIsConfiguring] = useState(false);
         const isMountedRef = useRef(true);
 
@@ -63,6 +65,10 @@ if (isCI) {
                 if (isMountedRef.current) {
                     console.error('❌ Failed to load configuration:', error);
                 }
+            } finally {
+                if (isMountedRef.current) {
+                    setIsConfigLoaded(true);
+                }
             }
         };
 
@@ -74,12 +80,18 @@ if (isCI) {
         }, []);
 
         const handleCancel = () => {
-            void (async () => {
-                await refreshConfig();
-                if (isMountedRef.current) {
-                    setIsConfiguring(false);
-                }
-            })();
+            if (config?.apiKey) {
+                void (async () => {
+                    await refreshConfig();
+                    if (isMountedRef.current) {
+                        setIsConfiguring(false);
+                    }
+                })();
+                return;
+            }
+
+            exit();
+            process.exit(0);
         };
 
         const handleComplete = (newConfig: AppConfig) => {
@@ -92,6 +104,19 @@ if (isCI) {
                 setIsConfiguring(false);
             })();
         };
+
+        if (!isConfigLoaded) {
+            return (
+                <FullScreenTerminal>
+                    <GlobalMouseHandler />
+                    <Box flexDirection="column" padding={1}>
+                        <Text color="blue" bold>
+                            Loading AI Code Review configuration...
+                        </Text>
+                    </Box>
+                </FullScreenTerminal>
+            );
+        }
 
         if (!config.apiKey || isConfiguring) {
             return (
