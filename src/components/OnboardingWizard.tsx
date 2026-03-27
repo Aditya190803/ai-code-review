@@ -1,65 +1,41 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
-import { fetchModels } from '../config.js';
-import { useSearch } from './TUIUtils.js';
+import { fetchModels, getProviderLabels, normalizeConfig } from '../config.js';
+import { DEFAULT_REVIEW_LANGUAGE, DEFAULT_UI_LANGUAGE, SUPPORTED_LANGUAGES, getLanguageLabel } from '../locales.js';
+import { getProviderDefinition, getProviderEnvKey } from '../providers.js';
+import { useSearch, useTerminalSize } from './TUIUtils.js';
+import { SelectableList } from './SelectableList.js';
 import type { AppConfig } from '../types.js';
 
-// Reactive terminal size hook
-function useTerminalSize() {
-    const [size, setSize] = React.useState({
-        cols: process.stdout.columns || 80,
-        rows: process.stdout.rows || 24,
-    });
-
-    React.useEffect(() => {
-        const onResize = () => {
-            setSize({
-                cols: process.stdout.columns || 80,
-                rows: process.stdout.rows || 24,
-            });
-        };
-        process.stdout.on('resize', onResize);
-        return () => {
-            process.stdout.off('resize', onResize);
-        };
-    }, []);
-
-    return size;
-}
-
-const PROVIDERS = [
-    { label: 'NVIDIA NIM', value: 'nvidia' },
-    { label: 'Anthropic', value: 'anthropic' },
-    { label: 'Google Gemini', value: 'google' },
-    { label: 'OpenAI', value: 'openai' },
-    { label: 'OpenRouter', value: 'openrouter' },
-    { label: 'Groq', value: 'groq' },
-    { label: 'Cerebras', value: 'cerebras' },
+const PROVIDERS = getProviderLabels();
+const PROVIDER_VALUES = PROVIDERS.map((provider) => provider.value);
+const REVIEW_TONES = [
+    { label: 'Strict Production Review', value: 'strict' },
+    { label: 'Balanced Team-Friendly Review', value: 'balanced' },
 ];
 
-const PROVIDER_VALUES = PROVIDERS.map((p) => p.value);
+type WizardStep =
+    | 'provider'
+    | 'provider_key_choice'
+    | 'api_key'
+    | 'fetching_models'
+    | 'model'
+    | 'review_language'
+    | 'ui_language'
+    | 'review_tone'
+    | 'summary';
 
-function getEnvKeyForProvider(provider: string): string {
-    switch (provider) {
-        case 'nvidia':
-            return process.env.NIM_API_KEY || process.env.NVIDIA_API_KEY || '';
-        case 'openai':
-            return process.env.OPENAI_API_KEY || '';
-        case 'anthropic':
-            return process.env.ANTHROPIC_API_KEY || '';
-        case 'google':
-            return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
-        case 'openrouter':
-            return process.env.OPENROUTER_API_KEY || '';
-        case 'groq':
-            return process.env.GROQ_API_KEY || '';
-        case 'cerebras':
-            return process.env.CEREBRAS_API_KEY || '';
-        default:
-            return '';
+function getStoredKey(initialConfig: AppConfig | undefined, provider: string): string {
+    if (initialConfig?.provider === provider && initialConfig.apiKey) {
+        return initialConfig.apiKey;
     }
+
+    if (initialConfig?.keys?.[provider]) {
+        return initialConfig.keys[provider];
+    }
+
+    return getProviderEnvKey(provider);
 }
 
 export const OnboardingWizard = ({
@@ -71,74 +47,120 @@ export const OnboardingWizard = ({
     onComplete: (config: AppConfig) => void;
     onCancel?: () => void;
 }) => {
-    const [step, setStep] = useState(0);
-    const [provider, setProvider] = useState(initialConfig?.provider || 'nvidia');
-    const [apiKey, setApiKey] = useState(initialConfig?.apiKey || '');
+    const normalizedInitial = useMemo(() => normalizeConfig(initialConfig), [initialConfig]);
+    const [step, setStep] = useState<WizardStep>('provider');
+    const [provider, setProvider] = useState(normalizedInitial.provider);
+    const [apiKey, setApiKey] = useState(normalizedInitial.apiKey || '');
     const [models, setModels] = useState<{ label: string; value: string }[]>([]);
+    const [selectedModel, setSelectedModel] = useState(normalizedInitial.model);
+    const [reviewLanguage, setReviewLanguage] = useState(normalizedInitial.reviewLanguage || DEFAULT_REVIEW_LANGUAGE);
+    const [uiLanguage, setUiLanguage] = useState(normalizedInitial.uiLanguage || DEFAULT_UI_LANGUAGE);
+    const [reviewTone, setReviewTone] = useState(normalizedInitial.reviewTone || 'strict');
     const [isFetching, setIsFetching] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const { rows } = useTerminalSize();
-
-    // Model search state
     const { isSearching, setIsSearching, searchQuery, setSearchQuery } = useSearch();
 
-    const tryFetch = async (prov: string, key: string) => {
+    const providerDefinition = getProviderDefinition(provider);
+
+    const persistConfig = () => {
+        onComplete(normalizeConfig({
+            ...normalizedInitial,
+            provider,
+            apiKey: apiKey.trim(),
+            model: selectedModel,
+            reviewLanguage,
+            uiLanguage,
+            reviewTone,
+            keys: {
+                ...(normalizedInitial.keys || {}),
+                [provider]: apiKey.trim(),
+            },
+        }));
+    };
+
+    const tryFetch = async (nextProvider: string, key: string) => {
+        setError(null);
         setIsFetching(true);
-        setStep(3);
-        const list = await fetchModels(prov, key);
-        setModels(
-            list.length > 0
-                ? list
-                : [{ label: 'Fallback model: default', value: 'default' }]
-        );
-        setStep(4);
-        setIsFetching(false);
+        setStep('fetching_models');
+
+        const providerConfig = getProviderDefinition(nextProvider);
+        const fallbackModel = providerConfig?.defaultModel || 'default';
+        try {
+            const list = await fetchModels(nextProvider, key);
+            const nextModels = list.length > 0 ? list : [{ label: `Fallback model: ${fallbackModel}`, value: fallbackModel }];
+            setModels(nextModels);
+
+            const preferredModel = nextModels.find((model) => model.value === selectedModel)?.value
+                || nextModels.find((model) => model.value === normalizedInitial.model)?.value
+                || nextModels[0]?.value
+                || fallbackModel;
+
+            setSelectedModel(preferredModel);
+        } catch (e) {
+            const message = e instanceof Error ? e.message : 'Failed to fetch model list.';
+            setError(message);
+            setModels([{ label: `Fallback model: ${fallbackModel}`, value: fallbackModel }]);
+            setSelectedModel(fallbackModel);
+        } finally {
+            setStep('model');
+            setIsFetching(false);
+        }
     };
 
     useInput((input, key) => {
-        if (key.escape && step === 0 && onCancel) {
+        if (key.escape && onCancel && step === 'provider') {
+            onCancel();
+            return;
+        }
+
+        if (key.escape && step === 'model' && isSearching) {
+            setIsSearching(false);
+            setSearchQuery('');
+        }
+
+        if (key.leftArrow && step !== 'provider') {
+            if (step === 'provider_key_choice') setStep('provider');
+            else if (step === 'api_key') setStep('provider');
+            else if (step === 'model') setStep('provider');
+            else if (step === 'review_language') setStep('model');
+            else if (step === 'ui_language') setStep('review_language');
+            else if (step === 'review_tone') setStep('ui_language');
+            else if (step === 'summary') setStep('review_tone');
+        }
+
+        if (input === 'q' && onCancel && step !== 'api_key' && !(step === 'model' && isSearching)) {
             onCancel();
         }
     });
 
-    // Step 0: Select Provider
-    if (step === 0) {
+    if (step === 'provider') {
         return (
             <Box flexDirection="column" padding={1}>
                 <Box borderStyle="single" borderColor="blue" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
                     <Text color="white" bold>
-                        Welcome to AI Code Reviewer Setup
+                        AI Code Review Setup
                     </Text>
+                    <Text color="gray">Choose your provider to configure models, languages, and review behavior.</Text>
                 </Box>
+
                 <Box marginTop={1} flexDirection="column">
                     <Text>Select your preferred AI Provider:</Text>
-                    <SelectInput
+                    <SelectableList
                         items={PROVIDERS}
-                        initialIndex={
-                            PROVIDER_VALUES.indexOf(provider) > -1
-                                ? PROVIDER_VALUES.indexOf(provider)
-                                : 0
-                        }
+                        initialIndex={Math.max(PROVIDER_VALUES.indexOf(provider), 0)}
                         onSelect={(item) => {
-                            setProvider(item.value);
+                            const existingKey = getStoredKey(initialConfig, item.value);
+                            const nextProvider = item.value;
 
-                            let existingKey = '';
-                            if (
-                                initialConfig?.provider === item.value &&
-                                initialConfig?.apiKey
-                            ) {
-                                existingKey = initialConfig.apiKey;
-                            } else if (initialConfig?.keys && initialConfig.keys[item.value]) {
-                                existingKey = initialConfig.keys[item.value];
-                            } else {
-                                existingKey = getEnvKeyForProvider(item.value);
-                            }
-
+                            setProvider(nextProvider);
+                            setSelectedModel(getProviderDefinition(nextProvider)?.defaultModel || 'default');
                             if (existingKey) {
                                 setApiKey(existingKey);
-                                setStep(1);
+                                setStep('provider_key_choice');
                             } else {
                                 setApiKey('');
-                                setStep(2);
+                                setStep('api_key');
                             }
                         }}
                     />
@@ -147,8 +169,7 @@ export const OnboardingWizard = ({
         );
     }
 
-    // Step 1: Existing key detected
-    if (step === 1) {
+    if (step === 'provider_key_choice') {
         return (
             <Box flexDirection="column" padding={1}>
                 <Box borderStyle="single" borderColor="blue" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
@@ -158,26 +179,19 @@ export const OnboardingWizard = ({
                 </Box>
                 <Box marginTop={1} flexDirection="column">
                     <Text color="green">
-                        An API Key for {provider.toUpperCase()} was found. Do you
-                        want to edit or update it?
+                        A saved or environment API key for {providerDefinition?.label || provider.toUpperCase()} is available.
                     </Text>
-                    <SelectInput
+                    <SelectableList
                         items={[
-                            {
-                                label: 'Keep existing API key and continue',
-                                value: 'keep',
-                            },
-                            {
-                                label: 'Edit / Update new API key',
-                                value: 'update',
-                            },
+                            { label: 'Keep existing key and continue', value: 'keep' },
+                            { label: 'Enter a different API key', value: 'update' },
                         ]}
                         onSelect={(item) => {
                             if (item.value === 'keep') {
-                                tryFetch(provider, apiKey);
+                                void tryFetch(provider, apiKey);
                             } else {
                                 setApiKey('');
-                                setStep(2);
+                                setStep('api_key');
                             }
                         }}
                     />
@@ -186,14 +200,14 @@ export const OnboardingWizard = ({
         );
     }
 
-    // Step 2: Enter API key
-    if (step === 2) {
+    if (step === 'api_key') {
         return (
             <Box flexDirection="column" padding={1}>
                 <Box borderStyle="single" borderColor="blue" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
                     <Text color="white" bold>
-                        Enter your API Key for {provider.toUpperCase()}
+                        Enter API Key for {providerDefinition?.label || provider.toUpperCase()}
                     </Text>
+                    <Text color="gray">Stored locally in your CLI config, never committed to the repository.</Text>
                 </Box>
                 <Box marginTop={1} flexDirection="row">
                     <Text color="green">API Key ❯ </Text>
@@ -201,44 +215,50 @@ export const OnboardingWizard = ({
                         value={apiKey}
                         onChange={setApiKey}
                         mask="*"
-                        onSubmit={(val) => {
-                            if (val.trim()) {
-                                tryFetch(provider, val.trim());
+                        onSubmit={(value) => {
+                            const trimmed = value.trim();
+                            if (!trimmed) {
+                                setError('API key is required.');
+                                return;
                             }
+                            setApiKey(trimmed);
+                            void tryFetch(provider, trimmed);
                         }}
                     />
                 </Box>
+                {error && (
+                    <Box marginTop={1}>
+                        <Text color="red">{error}</Text>
+                    </Box>
+                )}
             </Box>
         );
     }
 
-    // Step 3: Fetching models
-    if (step === 3 || isFetching) {
+    if (step === 'fetching_models' || isFetching) {
         return (
             <Box flexDirection="column" padding={1}>
                 <Text color="yellow">
-                    Fetching available models for {provider.toUpperCase()}...
+                    Fetching available models for {providerDefinition?.label || provider.toUpperCase()}...
                 </Text>
             </Box>
         );
     }
 
-    // Step 4: Select model
-    if (step === 4) {
-        const filteredModels = models.filter((m) =>
-            m.label.toLowerCase().includes(searchQuery.toLowerCase())
+    if (step === 'model') {
+        const filteredModels = models.filter((model) =>
+            model.label.toLowerCase().includes(searchQuery.toLowerCase())
+                || model.value.toLowerCase().includes(searchQuery.toLowerCase())
         );
 
         return (
             <Box flexDirection="column" padding={1}>
                 <Box borderStyle="single" borderColor="blue" paddingX={2} paddingY={1} flexDirection="row" justifyContent="space-between">
                     <Text color="white" bold>
-                        Select Model {isSearching && <Text color="yellow"> [SEARCHING...]</Text>}
+                        Select Model {isSearching && <Text color="yellow">[SEARCHING]</Text>}
                     </Text>
                     {!isSearching && (
-                        <Text color="gray" dimColor>
-                            (Ctrl+F to search)
-                        </Text>
+                        <Text color="gray" dimColor>(Ctrl+F to search, mouse wheel supported)</Text>
                     )}
                 </Box>
 
@@ -254,26 +274,26 @@ export const OnboardingWizard = ({
                 )}
 
                 <Box marginTop={1} flexDirection="column">
-                    <Text>Choose the AI Model you want to use:</Text>
+                    <Text>Choose the AI model you want to use:</Text>
+
+                {error && !isSearching && (
+                    <Box marginTop={1}>
+                        <Text color="red">{error}</Text>
+                    </Box>
+                )}
                     {filteredModels.length > 0 ? (
-                        <SelectInput
+                        <SelectableList
                             items={filteredModels}
+                            initialIndex={Math.max(filteredModels.findIndex((model) => model.value === selectedModel), 0)}
                             limit={Math.max(rows - (isSearching ? 12 : 8), 5)}
                             onSelect={(item) => {
-                                onComplete({
-                                    provider,
-                                    apiKey: apiKey.trim(),
-                                    model: item.value,
-                                    keys: {
-                                        ...(initialConfig?.keys || {}),
-                                        [provider]: apiKey.trim(),
-                                    },
-                                });
+                                setSelectedModel(item.value);
+                                setStep('review_language');
                             }}
                         />
                     ) : (
                         <Box paddingY={1}>
-                            <Text color="red">No models matches "{searchQuery}"</Text>
+                            <Text color="red">No models match "{searchQuery}"</Text>
                         </Box>
                     )}
                 </Box>
@@ -281,5 +301,94 @@ export const OnboardingWizard = ({
         );
     }
 
-    return null;
+    if (step === 'review_language') {
+        return (
+            <Box flexDirection="column" padding={1}>
+                <Box borderStyle="single" borderColor="magenta" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
+                    <Text color="white" bold>Review Language</Text>
+                    <Text color="gray">The AI findings, fixes, and summaries will default to this language.</Text>
+                </Box>
+                <Box marginTop={1}>
+                    <SelectableList
+                        items={SUPPORTED_LANGUAGES.map((language) => ({ label: language.label, value: language.value }))}
+                        initialIndex={Math.max(SUPPORTED_LANGUAGES.findIndex((language) => language.value === reviewLanguage), 0)}
+                        onSelect={(item) => {
+                            setReviewLanguage(item.value);
+                            setStep('ui_language');
+                        }}
+                    />
+                </Box>
+            </Box>
+        );
+    }
+
+    if (step === 'ui_language') {
+        return (
+            <Box flexDirection="column" padding={1}>
+                <Box borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
+                    <Text color="white" bold>UI Language Preference</Text>
+                    <Text color="gray">This is stored now so the product can localize the interface as it expands.</Text>
+                </Box>
+                <Box marginTop={1}>
+                    <SelectableList
+                        items={SUPPORTED_LANGUAGES.map((language) => ({ label: language.label, value: language.value }))}
+                        initialIndex={Math.max(SUPPORTED_LANGUAGES.findIndex((language) => language.value === uiLanguage), 0)}
+                        onSelect={(item) => {
+                            setUiLanguage(item.value);
+                            setStep('review_tone');
+                        }}
+                    />
+                </Box>
+            </Box>
+        );
+    }
+
+    if (step === 'review_tone') {
+        return (
+            <Box flexDirection="column" padding={1}>
+                <Box borderStyle="single" borderColor="yellow" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
+                    <Text color="white" bold>Review Style</Text>
+                    <Text color="gray">Choose how strict the AI should sound and prioritize issues.</Text>
+                </Box>
+                <Box marginTop={1}>
+                    <SelectableList
+                        items={REVIEW_TONES}
+                        initialIndex={Math.max(REVIEW_TONES.findIndex((tone) => tone.value === reviewTone), 0)}
+                        onSelect={(item) => {
+                            setReviewTone(item.value as 'balanced' | 'strict');
+                            setStep('summary');
+                        }}
+                    />
+                </Box>
+            </Box>
+        );
+    }
+
+    return (
+        <Box flexDirection="column" padding={1}>
+            <Box borderStyle="double" borderColor="green" paddingX={2} paddingY={1} flexDirection="column">
+                <Text color="greenBright" bold>Ready to Save Configuration</Text>
+                <Text color="white">Provider: {providerDefinition?.label || provider}</Text>
+                <Text color="white">Model: {selectedModel}</Text>
+                <Text color="white">Review language: {getLanguageLabel(reviewLanguage)}</Text>
+                <Text color="white">UI language: {getLanguageLabel(uiLanguage)}</Text>
+                <Text color="white">Review tone: {reviewTone === 'strict' ? 'Strict production review' : 'Balanced team-friendly review'}</Text>
+            </Box>
+            <Box marginTop={1}>
+                <SelectableList
+                    items={[
+                        { label: 'Save and continue', value: 'save' },
+                        { label: 'Back and edit options', value: 'back' },
+                    ]}
+                    onSelect={(item) => {
+                        if (item.value === 'save') {
+                            persistConfig();
+                        } else {
+                            setStep('review_tone');
+                        }
+                    }}
+                />
+            </Box>
+        </Box>
+    );
 };
