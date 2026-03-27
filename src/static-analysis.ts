@@ -18,6 +18,10 @@ interface StaticRule {
     suggestedFix?: string;
 }
 
+const JS_LIKE_EXTENSIONS = ['.js', '.jsx', '.mjs', '.cjs'];
+const TS_LIKE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts'];
+const JS_TS_EXTENSIONS = [...TS_LIKE_EXTENSIONS, ...JS_LIKE_EXTENSIONS];
+
 const STATIC_RULES: StaticRule[] = [
     // ── Security ──
     {
@@ -48,7 +52,7 @@ const STATIC_RULES: StaticRule[] = [
         title: 'Usage of eval() detected',
         description: 'eval() executes arbitrary code and is a major security risk. Avoid it.',
         pattern: /\beval\s*\(/,
-        extensions: ['.ts', '.tsx', '.js', '.jsx'],
+        extensions: JS_TS_EXTENSIONS,
         suggestedFix: 'Use JSON.parse() for data, or a proper parser/interpreter for code.',
     },
     {
@@ -58,7 +62,7 @@ const STATIC_RULES: StaticRule[] = [
         title: 'innerHTML / dangerouslySetInnerHTML usage',
         description: 'Direct HTML injection can lead to XSS vulnerabilities.',
         pattern: /(?:\.innerHTML\s*=|dangerouslySetInnerHTML)/,
-        extensions: ['.ts', '.tsx', '.js', '.jsx'],
+        extensions: JS_TS_EXTENSIONS,
         suggestedFix: 'Sanitize HTML with DOMPurify or use textContent instead.',
     },
 
@@ -70,7 +74,7 @@ const STATIC_RULES: StaticRule[] = [
         title: 'console.log left in code',
         description: 'Debug console.log statements should be removed before production.',
         pattern: /\bconsole\.log\s*\(/,
-        extensions: ['.ts', '.tsx', '.js', '.jsx'],
+        extensions: JS_TS_EXTENSIONS,
         suggestedFix: 'Remove or replace with a proper logger.',
     },
     {
@@ -91,7 +95,7 @@ const STATIC_RULES: StaticRule[] = [
         description:
             'Swallowing errors silently makes debugging extremely difficult. At minimum log the error.',
         pattern: /catch\s*\([^)]*\)\s*\{\s*\}/,
-        extensions: ['.ts', '.tsx', '.js', '.jsx'],
+        extensions: JS_TS_EXTENSIONS,
         suggestedFix: 'Add error logging: catch (e) { console.error(e); }',
     },
     {
@@ -102,7 +106,7 @@ const STATIC_RULES: StaticRule[] = [
         description:
             'Loose equality can cause unexpected type coercion. Use === and !== instead.',
         pattern: /[^=!<>]==[^=]|[^=!]!=[^=]/,
-        extensions: ['.ts', '.tsx', '.js', '.jsx'],
+        extensions: JS_TS_EXTENSIONS,
         suggestedFix: 'Replace == with === and != with !==',
     },
 
@@ -115,7 +119,7 @@ const STATIC_RULES: StaticRule[] = [
         description:
             'Sync fs methods (readFileSync, writeFileSync, etc.) block the event loop. Use async versions.',
         pattern: /\b(?:readFileSync|writeFileSync|appendFileSync|mkdirSync|readdirSync|statSync|existsSync|unlinkSync|copyFileSync|renameSync)\b/,
-        extensions: ['.ts', '.tsx', '.js', '.jsx'],
+        extensions: JS_TS_EXTENSIONS,
         suggestedFix: 'Use the async version: readFile, writeFile, etc.',
     },
     {
@@ -126,7 +130,7 @@ const STATIC_RULES: StaticRule[] = [
         description:
             'Using await inside a for/while loop executes promises sequentially. Consider Promise.all() for parallelism.',
         pattern: /(?:for|while)\s*\([\s\S]*\)\s*\{[^}]*await\b/,
-        extensions: ['.ts', '.tsx', '.js', '.jsx'],
+        extensions: JS_TS_EXTENSIONS,
         suggestedFix: 'Collect promises and use Promise.all() or Promise.allSettled() for parallel execution.',
     },
 
@@ -139,7 +143,7 @@ const STATIC_RULES: StaticRule[] = [
         description:
             'Using "any" defeats the purpose of TypeScript. Use specific types or "unknown".',
         pattern: /:\s*any\b/,
-        extensions: ['.ts', '.tsx'],
+        extensions: TS_LIKE_EXTENSIONS,
         suggestedFix: 'Replace "any" with a specific type or use "unknown" with type guards.',
     },
     {
@@ -150,7 +154,7 @@ const STATIC_RULES: StaticRule[] = [
         description:
             '@ts-ignore hides potential type errors. Fix the type issue or use @ts-expect-error with a comment.',
         pattern: /@ts-ignore/,
-        extensions: ['.ts', '.tsx'],
+        extensions: TS_LIKE_EXTENSIONS,
         suggestedFix: 'Fix the type error, or use @ts-expect-error with a reason comment.',
     },
 
@@ -240,7 +244,7 @@ export function analyzeFileStatic(filePath: string, content: string): ScanIssue[
     }
 
     // Check for very long functions (>80 lines) — simple heuristic
-    if (['.ts', '.tsx', '.js', '.jsx'].includes(ext)) {
+    if (JS_TS_EXTENSIONS.includes(ext)) {
         let braceDepth = 0;
         let funcStartLine = -1;
         let funcName = '';

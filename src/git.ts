@@ -9,10 +9,14 @@ export async function getAllProjectFiles(): Promise<string[]> {
     let untracked = '';
     try {
         tracked = await git.raw(['ls-files']);
-    } catch (_) { }
+    } catch (e) {
+        console.error('Failed to get tracked files:', e);
+    }
     try {
         untracked = await git.raw(['ls-files', '--others', '--exclude-standard']);
-    } catch (_) { }
+    } catch (e) {
+        console.error('Failed to get untracked files:', e);
+    }
 
     const all = (tracked + '\n' + untracked).split('\n').filter((f) => f.trim() !== '');
     return [...new Set(all)];
@@ -20,8 +24,13 @@ export async function getAllProjectFiles(): Promise<string[]> {
 
 // ── Collect scannable code files ──
 const CODE_EXTENSIONS = [
-    '.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs',
-    '.java', '.rb', '.php', '.c', '.cpp', '.h', '.sh',
+    '.ts', '.tsx', '.mts', '.cts',
+    '.js', '.jsx', '.mjs', '.cjs',
+    '.py', '.go', '.rs', '.java',
+    '.rb', '.php',
+    '.c', '.cc', '.cpp', '.cxx',
+    '.h', '.hh', '.hpp', '.hxx',
+    '.sh',
 ];
 
 const SKIP_PATTERNS = [
@@ -34,10 +43,10 @@ const SKIP_PATTERNS = [
     /\.generated\./,       // Generated files
     /migrations?\//,       // DB migrations
     /vendor\//,            // Vendored code
-    /\.test\.(ts|js|tsx)$/, // Test files
-    /\.spec\.(ts|js|tsx)$/,
-    /__snapshots__\//,     // Jest snapshots
-    /\.stories\.(ts|tsx)$/, // Storybook stories
+    /\.test\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, // Test files
+    /\.spec\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/,
+    /__snapshots__\//,      // Jest snapshots
+    /\.stories\.(ts|tsx|js|jsx)$/, // Storybook stories
 ];
 
 async function getIgnorePatterns(): Promise<RegExp[]> {
@@ -54,7 +63,9 @@ async function getIgnorePatterns(): Promise<RegExp[]> {
                 patterns.push(new RegExp(regexStr));
             }
         }
-    } catch (_) { }
+    } catch (e) {
+        console.debug('Failed to get ignore patterns:', e);
+    }
     return patterns;
 }
 
@@ -83,7 +94,8 @@ export async function getChangedCodeFiles(): Promise<string[]> {
         return allUnique
             .filter((f) => CODE_EXTENSIONS.some((ext) => f.endsWith(ext)))
             .filter((f) => !ignorePatterns.some((pattern) => pattern.test(f)));
-    } catch (_) {
+    } catch (e) {
+        console.debug('Failed to get changed code files:', e);
         return [];
     }
 }
@@ -93,11 +105,15 @@ export async function getDiff(): Promise<string> {
     let diff = '';
     try {
         diff = await git.diff();
-    } catch (_) { }
+    } catch (e) {
+        console.debug('Failed to get diff:', e);
+    }
     if (!diff) {
         try {
             diff = await git.diff(['--staged']);
-        } catch (_) { }
+        } catch (e) {
+            console.debug('Failed to get staged diff:', e);
+        }
     }
 
     // Auto-include untracked files as additions
@@ -118,10 +134,14 @@ export async function getDiff(): Promise<string> {
                     }
                     const addedLines = lines.map((l: string) => '+' + l).join('\n');
                     diff += `\ndiff --git a/${file} b/${file}\n--- /dev/null\n+++ b/${file}\n@@ -0,0 +1,${lines.length} @@\n${addedLines}\n`;
-                } catch (_) { }
+                } catch (e) {
+                    console.debug('Failed to get untracked diff:', e);
+                }
             }
         }
-    } catch (_) { }
+    } catch (e) {
+        console.debug('Failed to check untracked diff files:', e);
+    }
 
     return diff || '';
 }
