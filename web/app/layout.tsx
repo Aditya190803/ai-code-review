@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "AI Code Review CLI",
   description: "AI-powered code review in the terminal, built with React, Ink, Bun, and the Vercel AI SDK.",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({

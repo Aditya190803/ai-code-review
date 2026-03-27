@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#18181b" />
+      <stop offset="100%" stop-color="#09090b" />
+    </linearGradient>
+    <linearGradient id="grad" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f43f5e" /> <!-- Rose 500 -->
+      <stop offset="50%" stop-color="#fb923c" /> <!-- Orange 400 -->
+      <stop offset="100%" stop-color="#fcd34d" /> <!-- Amber 300 -->
+    </linearGradient>
+  </defs>
+  
+  <rect width="512" height="512" rx="120" fill="url(#bg)" />
+  <rect width="504" height="504" x="4" y="4" rx="116" fill="none" stroke="#27272a" stroke-width="8" />
+
+  <!-- Terminal > -->
+  <path d="M140 160 L280 256 L140 352" fill="none" stroke="url(#grad)" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Terminal _ -->
+  <line x1="320" y1="360" x2="420" y2="360" stroke="#fcd34d" stroke-width="48" stroke-linecap="round" />
+
+  <!-- AI Sparkle -->
+  <path d="M380 90 Q380 140 430 140 Q380 140 380 190 Q380 140 330 140 Q380 140 380 90 Z" fill="#fb923c" />
+</svg>
