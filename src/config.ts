@@ -6,41 +6,77 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateText } from 'ai';
 import type { AppConfig } from './types.js';
+import { DEFAULT_REVIEW_LANGUAGE, DEFAULT_UI_LANGUAGE } from './locales.js';
+import { getProviderDefinition, getProviderEnvKey, PROVIDERS } from './providers.js';
 
 // ── Config Path ──
 const CONFIG_PATH = path.join(os.homedir(), '.ai-reviewer.json');
 
+function getDefaultConfig(): AppConfig {
+    const defaultProvider = 'nvidia';
+    const provider = getProviderDefinition(defaultProvider);
+
+    return {
+        provider: defaultProvider,
+        apiKey: getProviderEnvKey(defaultProvider) || null,
+        model: provider?.defaultModel || 'default',
+        keys: {},
+        reviewLanguage: DEFAULT_REVIEW_LANGUAGE,
+        uiLanguage: DEFAULT_UI_LANGUAGE,
+        reviewTone: 'strict',
+        providerOptions: {},
+    };
+}
+
+export function normalizeConfig(config?: Partial<AppConfig> | null): AppConfig {
+    const fallback = getDefaultConfig();
+    const provider = config?.provider || fallback.provider;
+    const providerDefinition = getProviderDefinition(provider);
+
+    return {
+        provider,
+        apiKey: config?.apiKey ?? config?.keys?.[provider] ?? getProviderEnvKey(provider) ?? fallback.apiKey,
+        model: config?.model || providerDefinition?.defaultModel || fallback.model,
+        keys: config?.keys || {},
+        reviewLanguage: config?.reviewLanguage || fallback.reviewLanguage,
+        uiLanguage: config?.uiLanguage || fallback.uiLanguage,
+        reviewTone: config?.reviewTone || fallback.reviewTone,
+        providerOptions: config?.providerOptions || {},
+    };
+}
+
 // ── Load / Save Config ──
 
-export function loadConfig(): AppConfig {
-    let conf: AppConfig = {
+export async function loadConfig(): Promise<AppConfig> {
+    let conf: AppConfig = normalizeConfig({
         provider: 'nvidia',
-        apiKey: process.env.AI_CODE_REVIEW_API_KEY || process.env.NIM_API_KEY || process.env.NVIDIA_API_KEY || null,
-        model: process.env.AI_MODEL || 'meta/llama3-70b-instruct',
-        keys: {},
-    };
+        apiKey: process.env.AI_CODE_REVIEW_API_KEY || getProviderEnvKey('nvidia') || null,
+        model: process.env.AI_MODEL || getProviderDefinition('nvidia')?.defaultModel || 'default',
+    });
 
     try {
-        if (fs.existsSync(CONFIG_PATH)) {
-            const saved = fs.readJsonSync(CONFIG_PATH);
-            if (saved.provider) conf.provider = saved.provider;
-            if (saved.apiKey) conf.apiKey = saved.apiKey;
-            if (saved.model) conf.model = saved.model;
-            if (saved.keys) conf.keys = saved.keys;
+        if (await fs.pathExists(CONFIG_PATH)) {
+            const saved = await fs.readJson(CONFIG_PATH);
+            conf = normalizeConfig(saved as Partial<AppConfig>);
         }
-    } catch (_) { }
+    } catch (e) {
+        console.debug('Failed to load local config', e);
+    }
 
     if (!conf.apiKey && process.env.OPENAI_API_KEY) {
-        conf.provider = 'openai';
-        conf.apiKey = process.env.OPENAI_API_KEY;
-        conf.model = 'gpt-4o';
+        conf = normalizeConfig({
+            ...conf,
+            provider: 'openai',
+            apiKey: process.env.OPENAI_API_KEY,
+            model: process.env.AI_MODEL || getProviderDefinition('openai')?.defaultModel,
+        });
     }
 
     return conf;
 }
 
-export function saveConfig(config: AppConfig) {
-    fs.writeJsonSync(CONFIG_PATH, config, { spaces: 2 });
+export async function saveConfig(config: AppConfig) {
+    await fs.writeJson(CONFIG_PATH, normalizeConfig(config), { spaces: 2 });
 }
 
 // ── Fetch Available Models ──
@@ -50,99 +86,80 @@ export async function fetchModels(
     apiKey: string
 ): Promise<{ label: string; value: string }[]> {
     try {
+        const definition = getProviderDefinition(provider);
+        if (!definition?.modelListURL) {
+            throw new Error(`Provider "${provider}" does not support remote model discovery.`);
+        }
+
         const fetchAndParse = async (url: string, headers: Record<string, string>) => {
             const res = await fetch(url, { headers });
             if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
             return await res.json();
         };
 
-        if (provider === 'nvidia') {
-            const data = await fetchAndParse('https://integrate.api.nvidia.com/v1/models', {
-                Authorization: `Bearer ${apiKey}`,
-            });
-            return (data.data || []).map((m: any) => ({ label: m.id, value: m.id }));
-        } else if (provider === 'openai') {
-            const data = await fetchAndParse('https://api.openai.com/v1/models', {
-                Authorization: `Bearer ${apiKey}`,
-            });
-            return (data.data || [])
-                .filter((m: any) => m.id.includes('gpt'))
-                .map((m: any) => ({ label: m.id, value: m.id }));
-        } else if (provider === 'groq') {
-            const data = await fetchAndParse('https://api.groq.com/openai/v1/models', {
-                Authorization: `Bearer ${apiKey}`,
-            });
-            return (data.data || []).map((m: any) => ({ label: m.id, value: m.id }));
-        } else if (provider === 'cerebras') {
-            const data = await fetchAndParse('https://api.cerebras.ai/v1/models', {
-                Authorization: `Bearer ${apiKey}`,
-            });
-            return (data.data || []).map((m: any) => ({ label: m.id, value: m.id }));
-        } else if (provider === 'openrouter') {
-            const data = await fetchAndParse('https://openrouter.ai/api/v1/models', {});
-            return (data.data || []).map((m: any) => ({ label: m.id, value: m.id }));
-        } else if (provider === 'anthropic') {
-            const res = await fetch('https://api.anthropic.com/v1/models', {
-                headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-            });
-            if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-            const data = await res.json();
-            return (data.data || [])
-                .sort((a: any, b: any) => (b.created_at || '').localeCompare(a.created_at || ''))
-                .map((m: any) => ({ label: m.display_name || m.id, value: m.id }));
-        } else if (provider === 'google') {
-            const data = await fetchAndParse(
-                'https://generativelanguage.googleapis.com/v1beta/models',
-                { 'x-goog-api-key': apiKey }
-            );
-            return (data.models || [])
-                .filter((m: any) => m.name.includes('gemini'))
-                .map((m: any) => ({ label: m.displayName, value: m.name.replace('models/', '') }));
+        const data = await fetchAndParse(
+            definition.modelListURL,
+            definition.authHeaders?.(apiKey) || {}
+        );
+        const response = data as Record<string, unknown>;
+        const source = Array.isArray(response[definition.modelResponsePath])
+            ? response[definition.modelResponsePath] as Record<string, unknown>[]
+            : [];
+
+        const models = source
+            .map((model: unknown) => definition.modelMapper(model as Record<string, unknown>))
+            .filter(Boolean) as { label: string; value: string }[];
+
+        if (provider === 'anthropic') {
+            return models.sort((a, b) => a.label.localeCompare(b.label));
         }
+
+        return models;
     } catch (e) {
         console.error('Failed to fetch models', e);
+        throw e;
     }
-
-    return [{ label: 'Default Model Fallback', value: 'default' }];
 }
 
 // ── Get AI Model Instance ──
 
 export function getModel(config: AppConfig) {
-    if (!config.apiKey) {
+    const normalized = normalizeConfig(config);
+
+    if (!normalized.apiKey) {
         throw new Error('API key is required. Set an API key via environment variable or configuration.');
     }
 
-    if (config.provider === 'anthropic') {
-        const anthropic = createAnthropic({ apiKey: config.apiKey });
-        return anthropic(config.model || 'claude-4.5-sonnet');
+    if (normalized.provider === 'anthropic') {
+        const anthropic = createAnthropic({ apiKey: normalized.apiKey });
+        return anthropic(normalized.model || getProviderDefinition('anthropic')?.defaultModel || 'claude-sonnet-4-5');
     }
-    if (config.provider === 'google') {
-        const google = createGoogleGenerativeAI({ apiKey: config.apiKey });
-        return google(config.model || 'gemini-2.5-flash');
+    if (normalized.provider === 'google') {
+        const google = createGoogleGenerativeAI({ apiKey: normalized.apiKey });
+        return google(normalized.model || getProviderDefinition('google')?.defaultModel || 'gemini-2.5-flash');
     }
-    if (config.provider === 'openai') {
+    if (normalized.provider === 'openai') {
         const openai = createOpenAICompatible({
             name: 'openai',
-            baseURL: 'https://api.openai.com/v1',
-            headers: { Authorization: `Bearer ${config.apiKey}` },
+            baseURL: normalized.providerOptions?.openai?.baseURL || getProviderDefinition('openai')?.baseURL || 'https://api.openai.com/v1',
+            headers: { Authorization: `Bearer ${normalized.apiKey}` },
         });
-        return openai(config.model || 'gpt-5-mini-2025-08-07');
+        return openai(normalized.model || getProviderDefinition('openai')?.defaultModel || 'gpt-5-mini');
     }
 
-    let baseURL = '';
-    if (config.provider === 'nvidia') baseURL = 'https://integrate.api.nvidia.com/v1';
-    else if (config.provider === 'openrouter') baseURL = 'https://openrouter.ai/api/v1';
-    else if (config.provider === 'groq') baseURL = 'https://api.groq.com/openai/v1';
-    else if (config.provider === 'cerebras') baseURL = 'https://api.cerebras.ai/v1';
-    else baseURL = 'https://api.openai.com/v1';
+    const providerDefinition = getProviderDefinition(normalized.provider);
+    const baseURL =
+        normalized.providerOptions?.[normalized.provider]?.baseURL ||
+        providerDefinition?.baseURL ||
+        getProviderDefinition('openai')?.baseURL ||
+        'https://api.openai.com/v1';
 
     const openaiCompat = createOpenAICompatible({
-        name: config.provider,
+        name: normalized.provider,
         baseURL,
-        headers: { Authorization: `Bearer ${config.apiKey}` },
+        headers: { Authorization: `Bearer ${normalized.apiKey}` },
     });
-    return openaiCompat(config.model || 'default');
+    return openaiCompat(normalized.model || providerDefinition?.defaultModel || 'default');
 }
 
 /**
@@ -153,11 +170,18 @@ export async function validateApiKey(config: AppConfig): Promise<boolean> {
         const model = getModel(config);
         await generateText({
             model,
-            system: "Reply OK",
-            prompt: "ping",
+            system: 'Reply OK',
+            prompt: 'ping',
         });
         return true;
     } catch (e) {
         return false;
     }
+}
+
+export function getProviderLabels(): { label: string; value: string }[] {
+    return PROVIDERS.map((provider) => ({
+        label: provider.label,
+        value: provider.id,
+    }));
 }

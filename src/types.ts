@@ -18,6 +18,35 @@ export interface AppConfig {
     apiKey: string | null;
     model: string;
     keys?: Record<string, string>;
+    reviewLanguage?: string;
+    uiLanguage?: string;
+    reviewTone?: 'balanced' | 'strict';
+    providerOptions?: Record<string, {
+        baseURL?: string;
+        modelListURL?: string;
+    }>;
+}
+
+export interface IndexedFileEntry {
+    path: string;
+    ext: string;
+    hash: string;
+    bytes: number;
+    summary: string;
+    imports: string[];
+    localDependencies: string[];
+    dependents: string[];
+    exports: string[];
+    symbols: string[];
+    updatedAt: number;
+}
+
+export interface ProjectIndex {
+    version: string;
+    root: string;
+    generatedAt: number;
+    revision: string;
+    files: Record<string, IndexedFileEntry>;
 }
 
 export const SEVERITY_COLORS: Record<string, string> = {
