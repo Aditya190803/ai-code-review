@@ -1,13 +1,14 @@
 import * as fs from 'fs-extra';
 import { createHash } from 'crypto';
-import { generateObject, generateText } from 'ai';
+import { generateObject } from 'ai';
 import { z } from 'zod';
 import { getModel } from './config.js';
 import { git, getCodeFiles } from './git.js';
 import { analyzeFileStatic } from './static-analysis.js';
 import { extractMeaningfulCode } from './ast.js';
-import { SCAN_SYSTEM_PROMPT, TRIAGE_SYSTEM_PROMPT } from './prompts.js';
-import type { ScanIssue, AppConfig } from './types.js';
+import { ensureProjectIndex, getProjectContext } from './project-index.js';
+import { getScanSystemPrompt, SCAN_PROMPT_VERSION, TRIAGE_SYSTEM_PROMPT } from './prompts.js';
+import type { ScanIssue, AppConfig, ProjectIndex } from './types.js';
 
 const IssueSchema = z.object({
     issues: z.array(z.object({
@@ -32,10 +33,11 @@ async function withRetry<T>(
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
             return await fn();
-        } catch (e: any) {
+        } catch (e: unknown) {
             if (attempt === maxRetries) throw e;
-            const msg = e?.message?.toLowerCase() || '';
-            const status = e?.status || e?.statusCode;
+            const error = e as { message?: string; status?: number; statusCode?: number };
+            const msg = error.message?.toLowerCase() || '';
+            const status = error.status || error.statusCode;
             if (status === 429 || msg.includes('rate') || msg.includes('too many requests')) {
                 const delay = baseDelay * Math.pow(2, attempt);
                 await new Promise(r => setTimeout(r, delay));
@@ -48,19 +50,19 @@ async function withRetry<T>(
 }
 
 // ── Parse AI response into structured issues ──
-export function parseScanIssues(parsed: any, fileName: string): ScanIssue[] {
+export function parseScanIssues(parsed: Record<string, unknown>, fileName: string): ScanIssue[] {
     if (!parsed || !Array.isArray(parsed.issues)) return [];
 
-    return parsed.issues.map((item: any) => ({
-        category: item.category || 'bug',
-        severity: item.severity || 'info',
-        title: item.title || 'Untitled issue',
-        line: item.line ?? 0,
-        lineEnd: item.lineEnd ?? item.line ?? 0,
-        codeContext: item.codeContext || '',
-        description: item.description || '',
-        suggestedFix: item.suggestedFix || '',
-        aiPrompt: item.aiPrompt || '',
+    return parsed.issues.map((item: Record<string, unknown>) => ({
+        category: typeof item.category === 'string' ? item.category : 'bug',
+        severity: typeof item.severity === 'string' ? item.severity : 'info',
+        title: typeof item.title === 'string' ? item.title : 'Untitled issue',
+        line: typeof item.line === 'number' ? item.line : 0,
+        lineEnd: typeof item.lineEnd === 'number' ? item.lineEnd : (typeof item.line === 'number' ? item.line : 0),
+        codeContext: typeof item.codeContext === 'string' ? item.codeContext : '',
+        description: typeof item.description === 'string' ? item.description : '',
+        suggestedFix: typeof item.suggestedFix === 'string' ? item.suggestedFix : '',
+        aiPrompt: typeof item.aiPrompt === 'string' ? item.aiPrompt : '',
         file: fileName,
     }));
 }
@@ -108,69 +110,6 @@ async function runWithConcurrency<T>(
 }
 
 /**
- * Scan a single file: static analysis first, then LLM for deeper issues.
- */
-async function scanSingleFile(
-    file: string,
-    config: AppConfig,
-    callbacks: ScanCallbacks
-): Promise<{ issues: ScanIssue[]; scanned: boolean; error?: string }> {
-    try {
-        const content = await fs.readFile(file, 'utf-8');
-
-        if (content.trim().length === 0) {
-            return { issues: [], scanned: false };
-        }
-
-        if (content.length > 50000) {
-            callbacks.onLog(`⏭️ Skipped \`${file}\` (too large: ${Math.round(content.length / 1024)}KB)`);
-            return { issues: [], scanned: false };
-        }
-
-        // ── Phase 1: Instant static analysis (milliseconds) ──
-        const staticIssues = analyzeFileStatic(file, content);
-        if (staticIssues.length > 0) {
-            callbacks.onLog(
-                `⚡ ${staticIssues.length} static issue(s) in \`${file}\` (instant)`
-            );
-        }
-
-        // ── Phase 2: LLM deep scan (seconds) ──
-        let aiIssues: ScanIssue[] = [];
-        try {
-            const { object: parsed } = await generateObject({
-                model: getModel(config),
-                schema: IssueSchema,
-                system: SCAN_SYSTEM_PROMPT,
-                prompt: `File: ${file}\nFile size: ${content.length} characters\nLines: ${content.split('\n').length}\n\nFull contents:\n\`\`\`\n${content}\n\`\`\``,
-            });
-
-            aiIssues = parseScanIssues(parsed, file);
-
-            if (aiIssues.length > 0) {
-                callbacks.onLog(`${aiIssues.length} AI issue(s) in \`${file}\``);
-            }
-        } catch (e) {
-            const errMsg = (e as Error).message.slice(0, 100);
-            callbacks.onLog(`Warning: AI scan failed for \`${file}\`: ${errMsg} (static results still valid)`);
-        }
-
-        // Merge & deduplicate (prefer AI issues if titles overlap)
-        const allIssues = deduplicateIssues([...staticIssues, ...aiIssues]);
-
-        if (allIssues.length === 0) {
-            callbacks.onLog(`\`${file}\` - clean`);
-        }
-
-        return { issues: allIssues, scanned: true };
-    } catch (e) {
-        const errMsg = (e as Error).message.slice(0, 100);
-        callbacks.onLog(`Error scanning \`${file}\`: ${errMsg}`);
-        return { issues: [], scanned: false, error: errMsg };
-    }
-}
-
-/**
  * Remove duplicate issues (same file + similar line + similar title).
  */
 function deduplicateIssues(issues: ScanIssue[]): ScanIssue[] {
@@ -193,6 +132,300 @@ export interface ScanResult {
     durationSecs: number;
 }
 
+function computeScanCacheKey(config: AppConfig): string {
+    return createHash('sha256')
+        .update(JSON.stringify({
+            provider: config.provider,
+            model: config.model,
+            reviewLanguage: config.reviewLanguage || 'en',
+            reviewTone: config.reviewTone || 'strict',
+            promptVersion: SCAN_PROMPT_VERSION,
+        }))
+        .digest('hex');
+}
+
+interface CachedScanEntry {
+    hash: string;
+    contextHash: string;
+    issues: ScanIssue[];
+    timestamp: number;
+    scanCacheKey: string;
+}
+
+interface ScanRuntime {
+    config: AppConfig;
+    callbacks: ScanCallbacks;
+    filesToScan?: string[];
+    abortSignal?: AbortSignal;
+    scannable: Array<{ file: string; content: string }>;
+    staticResults: ScanIssue[];
+    cache: Record<string, CachedScanEntry>;
+    scanCacheKey: string;
+    projectIndex: ProjectIndex;
+    phase2Start: number;
+    completedCount: number;
+    allAiIssues: ScanIssue[];
+}
+
+interface FileTaskContext {
+    hash: string;
+    projectContext: string;
+    currentContextHash: string;
+    cached?: CachedScanEntry;
+}
+
+function renderScanProgress(completedCount: number, totalCount: number, phase2Start: number): string {
+    const percentage = Math.floor((completedCount / totalCount) * 100) || 0;
+    const blocks = Math.floor(percentage / 5);
+    const bar = '█'.repeat(blocks) + '░'.repeat(20 - blocks);
+    const elapsed = Date.now() - phase2Start;
+    const avgTimePerFile = completedCount > 0 ? elapsed / completedCount : 0;
+    const remaining = (totalCount - completedCount) * avgTimePerFile;
+    return `Scanning: [${bar}] ${percentage}% (${completedCount}/${totalCount}) ETA: ${Math.ceil(remaining / 1000)}s`;
+}
+
+function buildFileTaskContext(runtime: ScanRuntime, file: string, content: string): FileTaskContext {
+    const hash = createHash('sha256').update(content).digest('hex');
+    const projectContext = getProjectContext(runtime.projectIndex, file, {
+        changedFiles: runtime.filesToScan,
+    });
+    const currentContextHash = createHash('sha256').update(projectContext).digest('hex');
+
+    return {
+        hash,
+        projectContext,
+        currentContextHash,
+        cached: runtime.cache[file],
+    };
+}
+
+function recordTaskProgress(runtime: ScanRuntime, file: string, issueCount: number, message: string): void {
+    runtime.completedCount++;
+    runtime.callbacks.onLog(message);
+    runtime.callbacks.onProgress(renderScanProgress(runtime.completedCount, runtime.scannable.length, runtime.phase2Start));
+
+    if (issueCount > 0) {
+        runtime.callbacks.onIssuesUpdate(deduplicateIssues([...runtime.staticResults, ...runtime.allAiIssues]));
+    }
+}
+
+function storeCacheEntry(runtime: ScanRuntime, file: string, context: FileTaskContext, issues: ScanIssue[]): void {
+    if (runtime.abortSignal?.aborted) return;
+
+    runtime.cache[file] = {
+        hash: context.hash,
+        contextHash: context.currentContextHash,
+        issues,
+        timestamp: Date.now(),
+        scanCacheKey: runtime.scanCacheKey,
+    };
+}
+
+function handleCacheHit(runtime: ScanRuntime, file: string, cached: CachedScanEntry): ScanIssue[] {
+    runtime.allAiIssues.push(...cached.issues);
+    recordTaskProgress(runtime, file, cached.issues.length, `♻️  Cache hit for \`${file}\``);
+    return cached.issues;
+}
+
+function handleTriagedSkip(runtime: ScanRuntime, file: string, context: FileTaskContext, score: number): ScanIssue[] {
+    recordTaskProgress(runtime, file, 0, `✅ Triage: \`${file}\` looks clean (score ${score}) - skipping deep scan`);
+    storeCacheEntry(runtime, file, context, []);
+    return [];
+}
+
+function handleDetectedIssues(runtime: ScanRuntime, file: string, issues: ScanIssue[]): ScanIssue[] {
+    if (issues.length > 0) {
+        runtime.allAiIssues.push(...issues);
+        recordTaskProgress(runtime, file, issues.length, `🚨 ${issues.length} AI issue(s) in \`${file}\``);
+        return issues;
+    }
+
+    recordTaskProgress(runtime, file, 0, `\`${file}\` - clean (AI)`);
+    return issues;
+}
+
+function handleTaskFailure(runtime: ScanRuntime, file: string, error: unknown): ScanIssue[] {
+    const err = error as Error;
+    const errMsg = err.message.slice(0, 100);
+
+    if (err.name === 'AbortError') {
+        runtime.callbacks.onLog(`AI scan timeout for \`${file}\` (static results still valid)`);
+    } else {
+        runtime.callbacks.onLog(`AI error on \`${file}\`: ${errMsg}`);
+    }
+
+    runtime.completedCount++;
+    runtime.callbacks.onProgress(renderScanProgress(runtime.completedCount, runtime.scannable.length, runtime.phase2Start));
+    return [] as ScanIssue[];
+}
+
+async function triageFile(runtime: ScanRuntime, file: string, contentToSend: string): Promise<number | null> {
+    try {
+        const { object: triage } = await generateObject({
+            model: getModel(runtime.config),
+            schema: z.object({ score: z.number().min(1).max(10) }),
+            system: TRIAGE_SYSTEM_PROMPT,
+            prompt: `File: ${file}\n\n${contentToSend}`,
+            abortSignal: runtime.abortSignal,
+        });
+
+        return triage.score;
+    } catch {
+        return null;
+    }
+}
+
+async function runDeepScan(runtime: ScanRuntime, file: string, contentToSend: string, projectContext: string): Promise<ScanIssue[]> {
+    const { object: parsed } = await withRetry(async () => {
+        return await generateObject({
+            model: getModel(runtime.config),
+            schema: IssueSchema,
+            system: getScanSystemPrompt(runtime.config),
+            prompt: `File: ${file}\nContext: ${contentToSend}\n\nProject context:\n${projectContext || 'No additional project context available.'}\n\nContents/Diff:\n\`\`\`\n${contentToSend}\n\`\`\``,
+            abortSignal: runtime.abortSignal,
+        });
+    });
+
+    return parseScanIssues(parsed, file);
+}
+
+function createFileTask(runtime: ScanRuntime, file: string, content: string): () => Promise<ScanIssue[]> {
+    return async () => {
+        if (runtime.abortSignal?.aborted) return [];
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 20_000);
+        const abortHandler = () => controller.abort();
+
+        try {
+            const context = buildFileTaskContext(runtime, file, content);
+
+            if (
+                context.cached &&
+                context.cached.hash === context.hash &&
+                context.cached.contextHash === context.currentContextHash &&
+                context.cached.scanCacheKey === runtime.scanCacheKey
+            ) {
+                return handleCacheHit(runtime, file, context.cached);
+            }
+
+            let contentToSend = extractMeaningfulCode(file, content);
+            try {
+                const fileDiff = await git.diff([file]);
+                if (fileDiff && fileDiff.trim() !== '') {
+                    contentToSend = fileDiff;
+                }
+            } catch {
+                // Ignore diff errors and fall back to extracted code.
+            }
+
+            if (runtime.abortSignal) {
+                runtime.abortSignal.addEventListener('abort', abortHandler, { once: true });
+            }
+
+            const score = await triageFile(runtime, file, contentToSend);
+            if (typeof score === 'number' && score < 3) {
+                return handleTriagedSkip(runtime, file, context, score);
+            }
+
+            const issues = await runDeepScan(runtime, file, contentToSend, context.projectContext);
+            storeCacheEntry(runtime, file, context, issues);
+            return handleDetectedIssues(runtime, file, issues);
+        } catch (e) {
+            return handleTaskFailure(runtime, file, e);
+        } finally {
+            clearTimeout(timeout);
+            if (runtime.abortSignal) {
+                runtime.abortSignal.removeEventListener('abort', abortHandler);
+            }
+        }
+    };
+}
+
+function buildFinalReviewHeader(totalFiles: number, totalDurationSecs: number, finalIssuesCount: number, scannedFilesCount: number): string {
+    let finalHeader = `## Codebase Scan Report — Complete\n\n`;
+    finalHeader += `- **Total files:** ${totalFiles} \n`;
+    finalHeader += `- **Total time:** ${totalDurationSecs}s\n`;
+    finalHeader += `---\n\n`;
+
+    if (finalIssuesCount > 0) {
+        finalHeader += `Scan complete! **${finalIssuesCount} issues** found.\n`;
+    } else {
+        finalHeader += `No major issues found across ${scannedFilesCount} files.\n`;
+    }
+
+    return finalHeader;
+}
+
+async function loadCodeFileContents(codeFiles: string[]): Promise<Array<{ file: string; content: string }>> {
+    return Promise.all(
+        codeFiles.map(async (file) => {
+            try {
+                const content = await fs.readFile(file, 'utf-8');
+                return { file, content };
+            } catch (e) {
+                if ((e as any).code !== 'ENOENT') console.error('Error reading', file, e);
+                return { file, content: '' };
+            }
+        })
+    );
+}
+
+function runStaticScan(fileContents: Array<{ file: string; content: string }>): ScanIssue[] {
+    const staticResults: ScanIssue[] = [];
+
+    for (const { file, content } of fileContents) {
+        if (content.trim().length === 0 || content.length > 50000) continue;
+        staticResults.push(...analyzeFileStatic(file, content));
+    }
+
+    return staticResults;
+}
+
+async function loadScanCache(cacheFile: string): Promise<Record<string, CachedScanEntry>> {
+    try {
+        return await fs.readJson(cacheFile);
+    } catch (e: unknown) {
+        if (e && (e as { code?: string }).code !== 'ENOENT') console.error('Cache read error', e);
+        return {};
+    }
+}
+
+async function saveScanCache(cacheFile: string, cache: Record<string, CachedScanEntry>): Promise<void> {
+    try {
+        await fs.writeJson(cacheFile, cache, { spaces: 2 });
+    } catch (e) {
+        console.error('Cache write error', e);
+    }
+}
+
+function createScanRuntime(params: {
+    config: AppConfig;
+    callbacks: ScanCallbacks;
+    filesToScan?: string[];
+    abortSignal?: AbortSignal;
+    staticResults: ScanIssue[];
+    cache: Record<string, CachedScanEntry>;
+    scanCacheKey: string;
+    projectIndex: ProjectIndex;
+    scannable: Array<{ file: string; content: string }>;
+}): ScanRuntime {
+    return {
+        config: params.config,
+        callbacks: params.callbacks,
+        filesToScan: params.filesToScan,
+        abortSignal: params.abortSignal,
+        scannable: params.scannable,
+        staticResults: params.staticResults,
+        cache: params.cache,
+        scanCacheKey: params.scanCacheKey,
+        projectIndex: params.projectIndex,
+        phase2Start: Date.now(),
+        completedCount: 0,
+        allAiIssues: [],
+    };
+}
+
 export async function scanCodebase(
     config: AppConfig,
     callbacks: ScanCallbacks,
@@ -212,26 +445,8 @@ export async function scanCodebase(
 
     callbacks.onProgress(`Found ${codeFiles.length} code files. Running static analysis...`);
 
-    // ── Phase 1: Instant static analysis on ALL files (parallel, no network) ──
-    const phase1Start = Date.now();
-    const staticResults: ScanIssue[] = [];
-
-    const fileContents = await Promise.all(
-        codeFiles.map(async (file) => {
-            try {
-                const content = await fs.readFile(file, 'utf-8');
-                return { file, content };
-            } catch {
-                return { file, content: '' };
-            }
-        })
-    );
-
-    for (const { file, content } of fileContents) {
-        if (content.trim().length === 0 || content.length > 50000) continue;
-        const issues = analyzeFileStatic(file, content);
-        staticResults.push(...issues);
-    }
+    const fileContents = await loadCodeFileContents(codeFiles);
+    const staticResults = runStaticScan(fileContents);
 
     if (staticResults.length > 0) {
         callbacks.onLog(
@@ -251,172 +466,42 @@ export async function scanCodebase(
         `Scanning ${codeFiles.length} files...`
     );
 
-    // ── Load Cache ──
     const CACHE_FILE = '.ai-reviewer-cache.json';
-    let cache: Record<string, { hash: string; issues: ScanIssue[]; timestamp: number }> = {};
-    try {
-        cache = await fs.readJson(CACHE_FILE);
-    } catch (_) {
-        cache = {};
-    }
+    const scanCacheKey = computeScanCacheKey(config);
+    const cache = await loadScanCache(CACHE_FILE);
 
     const scannable = fileContents.filter(
         ({ content }) => content.trim().length > 0 && content.length <= 50000
     );
-
-    const phase2Start = Date.now();
-    let completedCount = 0;
-    const allAiIssues: ScanIssue[] = [];
-    let errorCount = 0;
-    let cacheHits = 0;
-
-    const renderProgress = (eta: number) => {
-        const percentage = Math.floor((completedCount / scannable.length) * 100) || 0;
-        const blocks = Math.floor(percentage / 5);
-        const bar = '█'.repeat(blocks) + '░'.repeat(20 - blocks);
-        return `Scanning: [${bar}] ${percentage}% (${completedCount}/${scannable.length}) ETA: ${Math.ceil(eta / 1000)}s`;
-    };
-
-    const tasks = scannable.map(({ file, content }) => async () => {
-        if (abortSignal?.aborted) return [];
-        try {
-            const hash = createHash('sha256').update(content).digest('hex');
-            const cached = cache[file];
-            if (cached && cached.hash === hash) {
-                completedCount++;
-                cacheHits++;
-                allAiIssues.push(...cached.issues);
-                const elapsed = Date.now() - phase2Start;
-                const avgTimePerFile = elapsed / completedCount;
-                const remaining = (scannable.length - completedCount) * avgTimePerFile;
-                callbacks.onProgress(renderProgress(remaining));
-                callbacks.onLog(`♻️  Cache hit for \`${file}\``);
-                const merged = deduplicateIssues([...staticResults, ...allAiIssues]);
-                callbacks.onIssuesUpdate(merged);
-                return cached.issues;
-            }
-
-            let contentToSend = extractMeaningfulCode(file, content);
-            try {
-                const fileDiff = await git.diff([file]);
-                if (fileDiff && fileDiff.trim() !== '') {
-                    contentToSend = fileDiff;
-                }
-            } catch (_) { }
-
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 20_000); // 20s timeout
-            if (abortSignal) {
-                abortSignal.addEventListener('abort', () => controller.abort());
-            }
-
-            // ── Phase 1.5: Fast Triage ──
-            try {
-                const { object: triage } = await generateObject({
-                    model: getModel(config),
-                    schema: z.object({ score: z.number().min(1).max(10) }),
-                    system: TRIAGE_SYSTEM_PROMPT,
-                    prompt: `File: ${file}\n\n${contentToSend}`,
-                    abortSignal: controller.signal,
-                });
-                const score = triage.score;
-                if (score < 3) {
-                    completedCount++;
-                    callbacks.onLog(`✅ Triage: \`${file}\` looks clean (score ${score}) - skipping deep scan`);
-                    const elapsed = Date.now() - phase2Start;
-                    const avgTimePerFile = elapsed / completedCount;
-                    const remaining = (scannable.length - completedCount) * avgTimePerFile;
-                    callbacks.onProgress(renderProgress(remaining));
-
-                    // Save "empty" result to cache so we don't triage again
-                    cache[file] = { hash, issues: [], timestamp: Date.now() };
-                    return [];
-                }
-            } catch (_) {
-                // If triage fails, just continue to deep scan
-            }
-
-            const { object: parsed } = await withRetry(async () => {
-                return await generateObject({
-                    model: getModel(config),
-                    schema: IssueSchema,
-                    system: SCAN_SYSTEM_PROMPT,
-                    prompt: `File: ${file}\nContext: ${contentToSend === content ? 'Full File' : 'Changed Lines Only (Diff)'}\n\nContents/Diff:\n\`\`\`\n${contentToSend}\n\`\`\``,
-                    abortSignal: controller.signal,
-                });
-            });
-
-            clearTimeout(timeout);
-            const issues = parseScanIssues(parsed, file);
-
-            // Save to cache
-            cache[file] = {
-                hash,
-                issues,
-                timestamp: Date.now()
-            };
-
-            completedCount++;
-            const elapsed = Date.now() - phase2Start;
-            const avgTimePerFile = elapsed / completedCount;
-            const remaining = (scannable.length - completedCount) * avgTimePerFile;
-            callbacks.onProgress(renderProgress(remaining));
-
-            if (issues.length > 0) {
-                allAiIssues.push(...issues);
-                callbacks.onLog(`🚨 ${issues.length} AI issue(s) in \`${file}\``);
-                // Live update issues count
-                const merged = deduplicateIssues([...staticResults, ...allAiIssues]);
-                callbacks.onIssuesUpdate(merged);
-            } else {
-                callbacks.onLog(`\`${file}\` - clean (AI)`);
-            }
-
-            return issues;
-        } catch (e) {
-            errorCount++;
-            completedCount++;
-            const errMsg = (e as Error).message.slice(0, 100);
-            if ((e as Error).name === 'AbortError') {
-                callbacks.onLog(`AI scan timeout for \`${file}\` (static results still valid)`);
-            } else {
-                callbacks.onLog(`AI error on \`${file}\`: ${errMsg}`);
-            }
-
-            const elapsed = Date.now() - phase2Start;
-            const avgTimePerFile = elapsed / completedCount;
-            const remaining = (scannable.length - completedCount) * avgTimePerFile;
-            callbacks.onProgress(renderProgress(remaining));
-
-            return [] as ScanIssue[];
-        }
+    const projectIndex = await ensureProjectIndex(codeFiles, {
+        onProgress: callbacks.onProgress,
+        onLog: callbacks.onLog,
     });
+
+    const runtime = createScanRuntime({
+        config,
+        callbacks,
+        filesToScan,
+        abortSignal,
+        staticResults,
+        cache,
+        scanCacheKey,
+        projectIndex,
+        scannable,
+    });
+
+    const tasks = scannable.map(({ file, content }) => createFileTask(runtime, file, content));
 
     await runWithConcurrency(tasks, concurrency);
 
-    // ── Save Cache ──
-    try {
-        await fs.writeJson(CACHE_FILE, cache, { spaces: 2 });
-    } catch (_) { }
+    await saveScanCache(CACHE_FILE, cache);
 
-    // ── Final merge & dedup ──
-    const finalIssues = deduplicateIssues([...staticResults, ...allAiIssues]);
+    const finalIssues = deduplicateIssues([...staticResults, ...runtime.allAiIssues]);
     callbacks.onIssuesUpdate(finalIssues);
     callbacks.onProgress('');
 
     const totalDurationSecs = parseFloat(((Date.now() - scanStartTime) / 1000).toFixed(1));
 
-    let finalHeader = `## Codebase Scan Report — Complete\n\n`;
-    finalHeader += `- **Total files:** ${codeFiles.length} \n`;
-    finalHeader += `- **Total time:** ${totalDurationSecs}s\n`;
-    finalHeader += `---\n\n`;
-
-    if (finalIssues.length > 0) {
-        finalHeader += `Scan complete! **${finalIssues.length} issues** found.\n`;
-    } else {
-        finalHeader += `No major issues found across ${scannable.length} files.\n`;
-    }
-
-    callbacks.onReviewUpdate(finalHeader);
+    callbacks.onReviewUpdate(buildFinalReviewHeader(codeFiles.length, totalDurationSecs, finalIssues.length, scannable.length));
     return { issues: finalIssues, durationSecs: totalDurationSecs };
 }
