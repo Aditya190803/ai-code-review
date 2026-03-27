@@ -1,28 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Text, useInput, useStdin, useApp } from 'ink';
-import SelectInput from 'ink-select-input';
-import { marked } from 'marked';
-import TerminalRenderer from 'marked-terminal';
-import { generateText, streamText } from 'ai';
+import { Box, Text, useInput, useApp } from 'ink';
+import { streamText } from 'ai';
 import clipboard from 'clipboardy';
 import { getModel, validateApiKey } from '../config.js';
 import { git, getDiff, getCodeFiles, getChangedCodeFiles } from '../git.js';
-import { getASTContext } from '../ast.js';
+import { ensureProjectIndex, getProjectContext } from '../project-index.js';
 import { scanCodebase } from '../scanner.js';
-import { REVIEW_SYSTEM_PROMPT } from '../prompts.js';
 import { IssueDetailView } from './IssueDetailView.js';
-import { IssueListView } from './IssueListView.js';
+import { IssueListView, createInitialIssueListState, getIssueListItems } from './IssueListView.js';
 import { ReviewResultView } from './ReviewResultView.js';
+import { SelectableList } from './SelectableList.js';
 import type { ScanIssue, AppConfig } from '../types.js';
-
-const termWidth = process.stdout.columns ? process.stdout.columns - 8 : 80;
-marked.setOptions({
-    // @ts-ignore
-    renderer: new TerminalRenderer({
-        width: termWidth,
-        reflowText: true,
-    }) as any,
-});
+import { getLanguageLabel } from '../locales.js';
+import { useTerminalSize } from './TUIUtils.js';
+import type { Key } from 'ink';
 
 /**
  * Format all scan issues into a single copyable text with errors and suggested fixes.
@@ -87,25 +78,27 @@ export const ReviewDashboard = ({
     onResetConfig: () => void;
 }) => {
     const { exit } = useApp();
+    const { cols, rows } = useTerminalSize();
     const [review, setReview] = useState<string>(
         'Welcome! Select an action below to get started.'
     );
     const [logs, setLogs] = useState<string[]>([]);
     const [isTyping, setIsTyping] = useState<boolean>(false);
-    const [patchData, setPatchData] = useState<string | null>(null);
     const [scanProgress, setScanProgress] = useState<string>('');
     const [scanIssues, setScanIssues] = useState<ScanIssue[]>([]);
     const [scanDuration, setScanDuration] = useState<number | null>(null);
     const [activeIssue, setActiveIssue] = useState<ScanIssue | null>(null);
+    const [issueListState, setIssueListState] = useState(createInitialIssueListState);
     const [viewMode, setViewMode] = useState<
         'dashboard' | 'issues' | 'detail' | 'review_result' | 'help'
     >('dashboard');
     const [confirmExit, setConfirmExit] = useState(false);
     const [hasExited, setHasExited] = useState(false);
-    const [copiedAll, setCopiedAll] = useState(false);
+    const [actionNotice, setActionNotice] = useState<string | null>(null);
+    const [actionNoticeKind, setActionNoticeKind] = useState<'info' | 'success' | 'warning' | 'error'>('info');
     const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const copyAllTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const actionNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const scanAbortControllerRef = useRef<AbortController | null>(null);
     const lastEscTimeRef = useRef<number>(0);
 
@@ -116,6 +109,12 @@ export const ReviewDashboard = ({
         modified: 0,
         filesChanged: 0
     });
+    const orderedIssueItems = getIssueListItems(scanIssues, issueListState).items.filter(
+        (item): item is { type: 'issue'; issue: ScanIssue; file: string } => item.type === 'issue'
+    );
+    const orderedIssues = orderedIssueItems.map((item) => item.issue);
+    const isCompact = cols < 110 || rows < 34;
+    const isCramped = cols < 88 || rows < 28;
 
     useEffect(() => {
         async function loadGitStatus() {
@@ -136,21 +135,93 @@ export const ReviewDashboard = ({
                     added: addCount + s.not_added.length,
                     modified: modCount,
                 }));
-            } catch (_) { }
+            } catch (err) {
+                // Ignore GIT status errors.
+            }
         }
         loadGitStatus();
     }, []);
 
     useEffect(() => {
+        let isCancelled = false;
+
+        async function warmProjectIndex() {
+            try {
+                const files = await getCodeFiles();
+                if (files.length === 0 || isCancelled) return;
+                await ensureProjectIndex(files);
+            } catch (err) {
+                // Background indexing is best-effort only.
+            }
+        }
+
+        void warmProjectIndex();
+
+        return () => {
+            isCancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        setIssueListState((prev) => {
+            const nextCollapsed = { ...prev.collapsed };
+            for (const file of [...new Set(scanIssues.map((issue) => issue.file))]) {
+                if (!(file in nextCollapsed)) {
+                    nextCollapsed[file] = true;
+                }
+            }
+
+            return {
+                ...prev,
+                collapsed: nextCollapsed,
+            };
+        });
+    }, [scanIssues]);
+
+    useEffect(() => {
         return () => {
             if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
             if (exitTimerRef.current) clearTimeout(exitTimerRef.current);
-            if (copyAllTimerRef.current) clearTimeout(copyAllTimerRef.current);
+            if (actionNoticeTimerRef.current) clearTimeout(actionNoticeTimerRef.current);
         };
     }, []);
 
     const addLog = (msg: string) => setLogs((prev) => [...prev, msg]);
     const logError = (msg: string) => addLog(`Error: ${msg}`);
+    const showActionNotice = (message: string, kind: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+        setActionNotice(message);
+        setActionNoticeKind(kind);
+        if (actionNoticeTimerRef.current) clearTimeout(actionNoticeTimerRef.current);
+        actionNoticeTimerRef.current = setTimeout(() => setActionNotice(null), 2200);
+    };
+    const renderActionToast = () => {
+        if (!actionNotice) return null;
+
+        const noticeColor = actionNoticeKind === 'success'
+            ? 'green'
+            : actionNoticeKind === 'error'
+                ? 'red'
+                : actionNoticeKind === 'warning'
+                    ? 'yellow'
+                    : 'blue';
+        const textColor = actionNoticeKind === 'success'
+            ? 'greenBright'
+            : actionNoticeKind === 'error'
+                ? 'redBright'
+                : actionNoticeKind === 'warning'
+                    ? 'yellow'
+                    : 'whiteBright';
+
+        return (
+            <Box alignItems="center" justifyContent="center" marginBottom={1}>
+                <Box borderStyle="round" borderColor={noticeColor} paddingX={2} paddingY={0}>
+                    <Text color={textColor} bold>
+                        {actionNotice}
+                    </Text>
+                </Box>
+            </Box>
+        );
+    };
 
     const doGracefulExit = () => {
         if (scanAbortControllerRef.current) {
@@ -168,17 +239,14 @@ export const ReviewDashboard = ({
         const text = formatAllIssuesForCopy(scanIssues);
         try {
             clipboard.writeSync(text);
-            setCopiedAll(true);
-            if (copyAllTimerRef.current) clearTimeout(copyAllTimerRef.current);
-            copyAllTimerRef.current = setTimeout(() => setCopiedAll(false), 2500);
+            showActionNotice(`Copied ${scanIssues.length} issues to clipboard`, 'success');
             addLog(`Copied all ${scanIssues.length} issues, fixes, and prompts to clipboard!`);
         } catch {
             clipboard.write(text).then(() => {
-                setCopiedAll(true);
-                if (copyAllTimerRef.current) clearTimeout(copyAllTimerRef.current);
-                copyAllTimerRef.current = setTimeout(() => setCopiedAll(false), 2500);
+                showActionNotice(`Copied ${scanIssues.length} issues to clipboard`, 'success');
                 addLog(`Copied all ${scanIssues.length} issues, fixes, and prompts to clipboard!`);
             }).catch(() => {
+                showActionNotice('Clipboard copy failed', 'error');
                 addLog('Could not copy to clipboard (clipboard unavailable).');
             });
         }
@@ -259,26 +327,6 @@ export const ReviewDashboard = ({
             return;
         }
 
-        if (item.value === 'apply_patch' && patchData) {
-            addLog('Applying AI-suggested patch...');
-            const patchFile = `fix-${Date.now()}.patch`;
-            try {
-                const fs = await import('fs-extra');
-                await fs.writeFile(patchFile, patchData);
-                await git.applyPatch(patchFile);
-                addLog('Patch applied successfully!');
-                setPatchData(null);
-            } catch (e) {
-                logError(`Failed to apply patch: ${(e as Error).message}`);
-            } finally {
-                try {
-                    const fs = await import('fs-extra');
-                    await fs.unlink(patchFile);
-                } catch (_) { }
-            }
-            return;
-        }
-
         if (item.value === 'scan') {
             setIsTyping(true);
             setScanProgress('Discovering files...');
@@ -338,10 +386,22 @@ export const ReviewDashboard = ({
                 setViewMode('review_result');
                 setReview('## Generating Summary...\n\n');
 
+                const changedFiles = await getChangedCodeFiles();
+                const allFiles = await getCodeFiles();
+                const projectIndex = allFiles.length > 0
+                    ? await ensureProjectIndex(allFiles)
+                    : null;
+                const projectContext = projectIndex && changedFiles.length > 0
+                    ? changedFiles
+                        .slice(0, 6)
+                        .map((file, index) => `--- changed file ${index + 1} ---\n${getProjectContext(projectIndex, file, { changedFiles })}`)
+                        .join('\n\n')
+                    : 'No project index context available.';
+
                 const { textStream } = await streamText({
                     model: getModel(config),
-                    system: "You are an automated PR summary generator. Summarize the following git diff into 'Features', 'Fixes', and 'Refactors' categories. Additionally, highlight impact zones, call-flow changes, and cross-file consequences. Output only the markdown summary.",
-                    prompt: `Here is the git diff:\n\n${currentDiff}`,
+                    system: `You are an automated PR summary generator. Write the response in ${getLanguageLabel(config.reviewLanguage)} using a ${config.reviewTone === 'balanced' ? 'constructive and collaborative' : 'strict production-ready'} tone. Summarize the following git diff into 'Features', 'Fixes', and 'Refactors' categories. Additionally, highlight impact zones, call-flow changes, and cross-file consequences. Output only the markdown summary.`,
+                    prompt: `Here is the git diff:\n\n${currentDiff}\n\nProject context for the changed files:\n${projectContext}`,
                 });
 
                 let fullText = '';
@@ -361,7 +421,7 @@ export const ReviewDashboard = ({
     };
 
     // ── Keyboard input handler ──
-    useInput((input: string, key: any) => {
+    useInput((input: string, key: Key) => {
         // If we've already exited, ignore all input
         if (hasExited) return;
 
@@ -464,15 +524,15 @@ export const ReviewDashboard = ({
                     <Text bold color="cyan">Keyboard Shortcuts Help</Text>
                     <Box marginTop={1} flexDirection="column">
                         <Text><Text color="yellow" bold>Dashboard:</Text></Text>
-                        <Text>  ↑/↓: Navigate menu  ·  Enter: Select action</Text>
-                        <Text>  ?: This help screen  ·  Ctrl+C: Quit</Text>
+                        <Text>  ↑/↓: Navigate menu  ·  Enter/Space: Select action</Text>
+                        <Text>  Mouse Wheel: Scroll selections  ·  ?: This help screen  ·  Ctrl+C: Quit</Text>
 
                         <Box marginTop={1}><Text><Text color="yellow" bold>Issue List:</Text></Text></Box>
-                        <Text>  ↑/↓: Navigate  ·  Enter: Open/Collapse  ·  /: Filter</Text>
-                        <Text>  s: Change sort  ·  t: Filter category  ·  Esc: Back</Text>
+                        <Text>  ↑/↓ or Mouse Wheel: Navigate  ·  Enter/Space: Open/Collapse  ·  →: Open issue  ·  /: Filter</Text>
+                        <Text>  PgUp/PgDn: Jump  ·  s: Change sort  ·  t: Filter category  ·  Esc: Back</Text>
 
                         <Box marginTop={1}><Text><Text color="yellow" bold>Issue Detail:</Text></Text></Box>
-                        <Text>  ↑/↓: Scroll  ·  c: Copy AI Prompt  ·  Esc: Back to list</Text>
+                        <Text>  ↑/↓ or Mouse Wheel: Scroll  ·  PgUp/PgDn: Jump  ·  c: Copy AI Prompt  ·  Esc: Back to list</Text>
                     </Box>
                 </Box>
                 <Box marginTop={1}>
@@ -484,45 +544,85 @@ export const ReviewDashboard = ({
 
     // ── Render Issue Sub-Views ──
     if (viewMode === 'detail' && activeIssue) {
+        const activeIssueIndex = orderedIssues.findIndex((candidate) =>
+            candidate.file === activeIssue.file &&
+            candidate.line === activeIssue.line &&
+            candidate.title === activeIssue.title
+        );
+
+        if (activeIssueIndex < 0) {
+            return (
+                <Box flexDirection="column" flexGrow={1}>
+                    {renderActionToast()}
+                    <Box flexDirection="column" padding={1}>
+                        <Text color="yellow" bold>
+                            The selected issue is no longer available in the current list.
+                        </Text>
+                        <Text color="whiteBright">
+                            Press Esc to return to the issue list.
+                        </Text>
+                    </Box>
+                </Box>
+            );
+        }
+
         return (
-            <IssueDetailView
-                issue={activeIssue}
-                onBack={() => {
-                    setActiveIssue(null);
-                    setViewMode('issues');
-                }}
-            />
+            <Box flexDirection="column" flexGrow={1}>
+                {renderActionToast()}
+                <IssueDetailView
+                    issues={orderedIssues}
+                    activeIndex={activeIssueIndex}
+                    issue={activeIssue}
+                    onSelectIssue={(nextIndex) => {
+                        const nextIssue = orderedIssues[nextIndex];
+                        if (nextIssue) {
+                            setActiveIssue(nextIssue);
+                        }
+                    }}
+                    onBack={() => {
+                        setActiveIssue(null);
+                        setViewMode('issues');
+                    }}
+                />
+            </Box>
         );
     }
 
     if (viewMode === 'review_result') {
         return (
-            <ReviewResultView
-                content={review}
-                onBack={() => setViewMode('dashboard')}
-            />
+            <Box flexDirection="column" flexGrow={1}>
+                {renderActionToast()}
+                <ReviewResultView
+                    content={review}
+                    onBack={() => setViewMode('dashboard')}
+                />
+            </Box>
         );
     }
 
     if (viewMode === 'issues' && scanIssues.length > 0) {
         return (
-            <IssueListView
-                issues={scanIssues}
-                durationSecs={scanDuration}
-                isTyping={isTyping}
-                scanProgress={scanProgress}
-                onBack={() => setViewMode('dashboard')}
-                onOpenIssue={(issue) => {
-                    setActiveIssue(issue);
-                    setViewMode('detail');
-                }}
-            />
+            <Box flexDirection="column" flexGrow={1}>
+                {renderActionToast()}
+                <IssueListView
+                    issues={scanIssues}
+                    durationSecs={scanDuration}
+                    isTyping={isTyping}
+                    scanProgress={scanProgress}
+                    state={issueListState}
+                    onStateChange={(updater) => setIssueListState(updater)}
+                    onBack={() => setViewMode('dashboard')}
+                    onOpenIssue={(issue) => {
+                        setActiveIssue(issue);
+                        setViewMode('detail');
+                    }}
+                />
+            </Box>
         );
     }
 
     // ── Render Main Dashboard ──
 
-    // Custom CodeRabbit style block ASCII art
     const LOGO = [
         { text: " █████╗ ██╗      ██████╗ ███████╗██╗   ██╗██╗███████╗██╗    ██╗", color: "#FF5F58" },
         { text: "██╔══██╗██║      ██╔══██╗██╔════╝██║   ██║██║██╔════╝██║    ██║", color: "#FF785A" },
@@ -531,6 +631,43 @@ export const ReviewDashboard = ({
         { text: "██║  ██║██║      ██║  ██║███████╗ ╚████╔╝ ██║███████╗╚███╔███╔╝", color: "#FFC361" },
         { text: "╚═╝  ╚═╝╚═╝      ╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝ ", color: "#FFDC64" }
     ];
+    const actionItems = [
+        ...(scanIssues.length > 0
+            ? [
+                {
+                    label: `View Last Scan Results (${scanIssues.length})`,
+                    value: 'browse_issues',
+                }
+            ]
+            : []),
+        {
+            label: scanIssues.length > 0 ? 'New Scan: Staged/Unstaged Changes' : 'Review Staged/Unstaged Changes',
+            value: 'review',
+        },
+        {
+            label: scanIssues.length > 0 ? 'New Scan: Full Codebase for Bugs' : 'Scan Full Codebase for Bugs',
+            value: 'scan',
+        },
+        ...(scanIssues.length > 0
+            ? [
+                {
+                    label: `Copy All Errors, Fixes & Prompts (${scanIssues.length})`,
+                    value: 'copy_all_issues',
+                },
+            ]
+            : []),
+        {
+            label: 'Generate PR Summary',
+            value: 'summary',
+        },
+        {
+            label: 'Settings',
+            value: 'settings',
+        },
+        { label: 'Quit', value: 'quit' },
+    ];
+    const reservedRows = isCramped ? 18 : isCompact ? 24 : 30;
+    const menuLimit = Math.max(4, Math.min(actionItems.length, rows - reservedRows));
 
     if (isTyping) {
         return (
@@ -549,33 +686,65 @@ export const ReviewDashboard = ({
     }
 
     return (
-        <Box flexDirection="column" flexGrow={1} height="100%">
-            {/* Main Center Content */}
-            <Box flexDirection="column" alignItems="center" flexGrow={1} paddingTop={3}>
-
-                {/* Logo */}
-                <Box flexDirection="column" alignItems="center" marginBottom={3}>
-                    {LOGO.map((line, idx) => (
-                        <Text key={idx} color={line.color} bold>{line.text}</Text>
-                    ))}
+        <Box flexDirection="column" flexGrow={1} height="100%" paddingX={isCramped ? 2 : 4} paddingY={isCramped ? 1 : 2}>
+            {renderActionToast()}
+            <Box
+                flexDirection="column"
+                alignItems="center"
+                justifyContent={isCramped ? 'flex-start' : 'center'}
+                flexGrow={1}
+            >
+                <Box flexDirection="column" alignItems="center" marginBottom={isCramped ? 1 : 2}>
+                    {isCramped ? (
+                        <Text color="#FF915C" bold>AI REVIEW</Text>
+                    ) : isCompact ? (
+                        <>
+                            <Text color="#FF5F58" bold>AI REVIEW</Text>
+                            <Box marginTop={1}>
+                                <Text color="gray">terminal code review assistant</Text>
+                            </Box>
+                        </>
+                    ) : (
+                        LOGO.map((line, idx) => (
+                            <Text key={idx} color={line.color} bold>{line.text}</Text>
+                        ))
+                    )}
                 </Box>
 
-                {/* Repo Info */}
-                <Box flexDirection="column" alignItems="center" marginBottom={2}>
+                <Box flexDirection="column" alignItems="center" marginBottom={isCramped ? 1 : 2}>
                     <Text color="gray">
                         repo: <Text color="white">{repoState.path}</Text>
                     </Text>
-                    <Box marginTop={1}>
-                        <Text color="gray">
-                            comparing: <Text color="white">{repoState.branch} → {repoState.branch} (base)</Text>
-                        </Text>
-                    </Box>
+                    <Text color="gray">
+                        comparing: <Text color="white">{repoState.branch} → {repoState.branch} (base)</Text>
+                    </Text>
+                    {isCramped ? (
+                        <>
+                            <Text color="gray">
+                                provider: <Text color="white">{config.provider}</Text>
+                            </Text>
+                            <Text color="gray">
+                                model: <Text color="white">{config.model}</Text>
+                            </Text>
+                            <Text color="gray">
+                                language: <Text color="white">{getLanguageLabel(config.reviewLanguage)}</Text>  ·  tone: <Text color="white">{config.reviewTone || 'strict'}</Text>
+                            </Text>
+                        </>
+                    ) : (
+                        <>
+                            <Text color="gray">
+                                provider: <Text color="white">{config.provider}</Text>  ·  model: <Text color="white">{config.model}</Text>
+                            </Text>
+                            <Text color="gray">
+                                review language: <Text color="white">{getLanguageLabel(config.reviewLanguage)}</Text>  ·  tone: <Text color="white">{config.reviewTone || 'strict'}</Text>
+                            </Text>
+                        </>
+                    )}
                 </Box>
 
-                {/* Git Diff Stats */}
-                <Box flexDirection="column" alignItems="flex-start" marginLeft={4} marginBottom={3}>
+                <Box flexDirection="column" alignItems="center">
                     <Text color="white">
-                        📁 {repoState.filesChanged} Files changed
+                        {repoState.filesChanged} Files changed
                     </Text>
                     <Text color="gray">
                         {repoState.added} added | {repoState.modified} modified
@@ -584,55 +753,18 @@ export const ReviewDashboard = ({
                         <Text color="green">+{Math.max(1, repoState.filesChanged * 14)} insertions</Text> <Text color="gray">|</Text> <Text color="red">-{repoState.modified * 3} deletions</Text>
                     </Text>
                 </Box>
+            </Box>
 
-                {/* Actions Selection */}
-                <Box flexDirection="column" alignItems="flex-start" marginTop={1}>
-                    <SelectInput
-                        items={[
-                            ...(scanIssues.length > 0
-                                ? [
-                                    {
-                                        label: `View Last Scan Results (${scanIssues.length})`,
-                                        value: 'browse_issues',
-                                    }
-                                ]
-                                : []),
-                            {
-                                label: scanIssues.length > 0 ? 'New Scan: Staged/Unstaged Changes' : 'Review Staged/Unstaged Changes',
-                                value: 'review',
-                            },
-                            {
-                                label: scanIssues.length > 0 ? 'New Scan: Full Codebase for Bugs' : 'Scan Full Codebase for Bugs',
-                                value: 'scan',
-                            },
-                            ...(scanIssues.length > 0
-                                ? [
-                                    {
-                                        label: `Copy All Errors, Fixes & Prompts (${scanIssues.length})`,
-                                        value: 'copy_all_issues',
-                                    },
-                                ]
-                                : []),
-                            {
-                                label: 'Generate PR Summary',
-                                value: 'summary',
-                            },
-                            ...(patchData
-                                ? [
-                                    {
-                                        label: 'Apply Patch (from Review)',
-                                        value: 'apply_patch',
-                                    },
-                                ]
-                                : []),
-                            {
-                                label: 'Settings',
-                                value: 'settings',
-                            },
-                            { label: 'Quit', value: 'quit' },
-                        ]}
-                        onSelect={handleSelectCommand}
-                    />
+            <Box flexDirection="column" alignItems="flex-start" marginTop={isCramped ? 1 : 2}>
+                <SelectableList
+                    items={actionItems}
+                    onSelect={handleSelectCommand}
+                    limit={menuLimit}
+                />
+                <Box marginTop={1}>
+                    <Text color="gray">
+                        ↑↓ or mouse wheel navigate  ·  Enter/Space select  ·  ? help
+                    </Text>
                 </Box>
             </Box>
         </Box>

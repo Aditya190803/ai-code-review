@@ -3,15 +3,14 @@ import { Box, Text, useInput } from 'ink';
 import { marked } from 'marked';
 import TerminalRenderer from 'marked-terminal';
 import clipboard from 'clipboardy';
+import { useArrowBurstGuard, useMouseWheel, useTerminalSize } from './TUIUtils.js';
 
-const termWidth = process.stdout.columns ? process.stdout.columns - 8 : 80;
-marked.setOptions({
-    // @ts-ignore
-    renderer: new TerminalRenderer({
-        width: termWidth,
-        reflowText: true,
-    }) as any,
-});
+const MIN_COLS = 90;
+const MIN_ROWS = 24;
+const PADDING_CRAMPED = 11;
+const PADDING_NORMAL = 8;
+const MIN_VIEWPORT_HEIGHT = 10;
+const COPY_TOAST_DURATION = 2000;
 
 /**
  * Full-screen view for the AI Review result.
@@ -24,18 +23,34 @@ export const ReviewResultView = ({
     content: string;
     onBack: () => void;
 }) => {
+    const { cols, rows } = useTerminalSize();
     const [scrollOffset, setScrollOffset] = useState(0);
     const [copied, setCopied] = useState(false);
+    const allowArrow = useArrowBurstGuard();
+    const isCramped = cols < MIN_COLS || rows < MIN_ROWS;
+    const termWidth = Math.max(40, cols - 8);
 
-    const termRows = process.stdout.rows || 24;
-    const viewportHeight = Math.max(termRows - 8, 10);
+    const viewportHeight = Math.max(rows - (isCramped ? PADDING_CRAMPED : PADDING_NORMAL), MIN_VIEWPORT_HEIGHT);
 
     const renderedMarkdown = useMemo(() => {
-        return String(marked(content)).trim();
-    }, [content]);
+        const renderer = new TerminalRenderer({
+            width: termWidth,
+            reflowText: true,
+        }) as never;
+
+        return String(marked.parse(content, { renderer })).trim();
+    }, [content, termWidth]);
 
     const lines = useMemo(() => renderedMarkdown.split('\n'), [renderedMarkdown]);
     const maxScroll = Math.max(0, lines.length - viewportHeight);
+
+    useMouseWheel((direction) => {
+        setScrollOffset((prev) =>
+            direction === 'up'
+                ? Math.max(0, prev - 1)
+                : Math.min(maxScroll, prev + 1)
+        );
+    }, maxScroll > 0);
 
     useInput((input, key) => {
         if (key.escape || key.leftArrow || input === 'b') {
@@ -44,23 +59,40 @@ export const ReviewResultView = ({
         }
 
         if (key.upArrow) {
+            if (!allowArrow('up')) return;
             setScrollOffset((prev) => Math.max(0, prev - 1));
+            return;
         }
         if (key.downArrow) {
+            if (!allowArrow('down')) return;
             setScrollOffset((prev) => Math.min(maxScroll, prev + 1));
+            return;
         }
         if (key.pageUp) {
             setScrollOffset((prev) => Math.max(0, prev - viewportHeight));
+            return;
         }
         if (key.pageDown) {
             setScrollOffset((prev) => Math.min(maxScroll, prev + viewportHeight));
+            return;
+        }
+        if (key.home) {
+            setScrollOffset(0);
+            return;
+        }
+        if (key.end) {
+            setScrollOffset(maxScroll);
+            return;
         }
 
-        if (input === 'c') {
+        if (input === 'c' && !key.meta && !key.ctrl) {
             try {
-                clipboard.writeSync(content);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
+                clipboard.write(content).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), COPY_TOAST_DURATION);
+                }).catch(() => {
+                    // Ignore background write errors
+                });
             } catch {
                 // Clipboard access failed - silently ignore or show error
             }
@@ -84,7 +116,7 @@ export const ReviewResultView = ({
 
             {/* Scroll Indicator */}
             <Box paddingX={1} marginTop={1}>
-                <Text color="gray" dimColor>
+                <Text color="whiteBright">
                     {scrollOffset > 0 ? '⏶' : ' '} {scrollPercent}% {scrollOffset < maxScroll ? '⏷' : ' '}
                     {' '}─── {scrollOffset + 1}–{Math.min(scrollOffset + viewportHeight, lines.length)} of {lines.length} lines ───
                 </Text>
@@ -100,11 +132,16 @@ export const ReviewResultView = ({
                 )}
             </Box>
 
-            <Box marginTop={1} gap={2} paddingX={1}>
-                <Text color="cyan">[c] Copy Report</Text>
-                <Text color="cyan">[↑↓] Scroll</Text>
-                <Text color="cyan">[Esc/b] Back to Menu</Text>
-                {copied && <Text color="greenBright">Copied!</Text>}
+            <Box marginTop={1} paddingX={1} flexDirection="column">
+                <Box flexDirection={isCramped ? 'column' : 'row'} gap={2}>
+                    <Text color="cyan">[c] Copy Report</Text>
+                    <Text color="cyan">[↑↓ / Mouse] Scroll</Text>
+                    <Text color="cyan">[PgUp/PgDn] Jump</Text>
+                </Box>
+                <Box marginTop={isCramped ? 0 : 1} flexDirection={isCramped ? 'column' : 'row'} gap={2}>
+                    <Text color="cyan">[Esc/b] Back to Menu</Text>
+                    {copied && <Text color="greenBright">Copied!</Text>}
+                </Box>
             </Box>
         </Box>
     );
