@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 echo "🚀 Installing AI Code Review Tool..."
@@ -11,7 +11,8 @@ fi
 
 INSTALL_DIR="$HOME/.ai-code-review"
 EXPECTED_REMOTE_SUFFIX="/Aditya190803/ai-code-review.git"
-REPO_URL="https://github.com/Aditya190803/ai-code-review.git"
+REPO_URL="${AI_CODE_REVIEW_REPO_URL:-https://github.com/Aditya190803/ai-code-review.git}"
+REPO_REF="${AI_CODE_REVIEW_REPO_REF:-8b2b112667ff7ce8b1f1dbb3e4a02edcf34879f5}"
 
 needs_fresh_clone=0
 if [ -d "$INSTALL_DIR" ]; then
@@ -39,39 +40,71 @@ fi
 if [ -d "$INSTALL_DIR" ]; then
     echo "🔄 Updating existing installation in $INSTALL_DIR..."
     cd "$INSTALL_DIR"
-    # Stash any local modifications to prevent conflicts
-    git stash --include-untracked --quiet 2>/dev/null || true
-    git pull --ff-only || { echo "⚠️ Could not fast-forward. Resetting to latest..."; git fetch origin && git reset --hard origin/main; }
-    git stash pop --quiet 2>/dev/null || true
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        if ! git stash push --include-untracked --message "ai-code-review-install" >/dev/null; then
+            echo "⚠️ Could not stash local changes safely. Aborting to avoid data loss."
+            exit 1
+        fi
+        had_stash=1
+    else
+        had_stash=0
+    fi
+
+    git fetch origin "$REPO_REF"
+    git checkout --detach "$REPO_REF"
+    git reset --hard "$REPO_REF"
+
+    if [ "$had_stash" -eq 1 ]; then
+        if ! git stash pop --quiet; then
+            echo "⚠️ Warning: git stash pop resulted in conflicts. Please resolve them manually."
+        fi
+    fi
 else
     echo "📦 Cloning repository to $INSTALL_DIR..."
     git clone "$REPO_URL" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
+    git checkout --detach "$REPO_REF"
 fi
 
 # Clean up any stale lockfiles and install fresh
 echo "📦 Installing dependencies..."
-bun install
+bun install --frozen-lockfile
 
 echo "🔗 Linking globally..."
-cat << EOF > ai-review-wrapper.sh
+cat << 'EOF' > ai-review-wrapper.sh
 #!/bin/bash
 set -euo pipefail
 
-INSTALL_DIR="$INSTALL_DIR"
+INSTALL_DIR="$(dirname "$(realpath "$0")")"
 
-if [ ! -f "\$INSTALL_DIR/app.tsx" ]; then
-    echo "error: Module not found \"\$INSTALL_DIR/app.tsx\""
+if [ ! -f "$INSTALL_DIR/app.tsx" ]; then
+    echo "error: Module not found \"$INSTALL_DIR/app.tsx\""
     echo "This installation looks incomplete or outdated. Re-run install.sh."
     exit 1
 fi
 
-exec bun run --cwd "\$INSTALL_DIR" app.tsx "\$@"
+exec bun run --cwd "$INSTALL_DIR" app.tsx "$@"
 EOF
 chmod +x ai-review-wrapper.sh
 
-mkdir -p "$HOME/.local/bin"
-ln -sf "$INSTALL_DIR/ai-review-wrapper.sh" "$HOME/.local/bin/ai-review"
+mkdir -m 755 -p "$HOME/.local/bin"
+AI_REVIEW_BIN="$HOME/.local/bin/ai-review"
+WRAPPER_PATH="$INSTALL_DIR/ai-review-wrapper.sh"
+
+if [ -e "$AI_REVIEW_BIN" ] || [ -L "$AI_REVIEW_BIN" ]; then
+    if [ -L "$AI_REVIEW_BIN" ]; then
+        existing_target=$(realpath "$AI_REVIEW_BIN" 2>/dev/null || true)
+        if [[ "$existing_target" != "$WRAPPER_PATH" && "$existing_target" != "$INSTALL_DIR/"* ]]; then
+            echo "⚠️ Warning: $AI_REVIEW_BIN points outside the installation directory. Skipping symlink creation to prevent hijacking."
+            exit 1
+        fi
+    elif [ ! -O "$AI_REVIEW_BIN" ]; then
+        echo "⚠️ Warning: $AI_REVIEW_BIN exists and is not owned by the current user. Skipping symlink creation to prevent hijacking."
+        exit 1
+    fi
+fi
+
+ln -snf "$WRAPPER_PATH" "$AI_REVIEW_BIN"
 
 # Add ~/.local/bin to PATH if not already present
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
