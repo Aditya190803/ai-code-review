@@ -13,6 +13,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "types": [
+      "bun",
       "node",
       "react"
     ]
@@ -20,5 +21,10 @@
   "include": [
     "**/*.ts",
     "**/*.tsx"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "web"
   ]
 }

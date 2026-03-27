@@ -9,7 +9,12 @@
   "scripts": {
     "dev": "bun run app.tsx",
     "build": "bun build app.tsx --outdir=dist --target=node --external react-devtools-core",
-    "lint": "bunx tsc --noEmit"
+    "lint": "bunx tsc --noEmit && bun run web:lint",
+    "test": "bun test",
+    "web:dev": "bun run --cwd web dev",
+    "web:build": "bun run --cwd web build",
+    "web:start": "bun run --cwd web start",
+    "web:lint": "bun run --cwd web lint"
   },
   "devDependencies": {
     "@types/bun": "latest",
