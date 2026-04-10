@@ -69,7 +69,7 @@ if [ ! -f "$INSTALL_DIR/app.tsx" ]; then
     exit 1
 fi
 
-exec bun run --cwd "$INSTALL_DIR" app.tsx "$@"
+exec bun run "$INSTALL_DIR/app.tsx" "$@"
 EOF
 chmod +x ai-review-wrapper.sh
 
