@@ -1,0 +1,27 @@
+# AI Code Review
+
+> An AI-powered code review tool that analyzes your code and gives feedback automatically to help developers improve code quality.
+
+## Overview
+AI Code Review is an intelligent code review platform that uses AI to automatically analyze codebases, identify issues, and provide actionable feedback. Available as both a web application and a terminal UI (TUI) for developers who prefer command-line workflows.
+
+## Key Features
+- **Automated Code Analysis** — AI-powered review of code quality, patterns, and best practices
+- **Issue Tracking** — Detailed issue listing with severity levels
+- **Review Dashboard** — Web-based dashboard for managing code reviews
+- **Terminal UI (TUI)** — Command-line interface for developers
+- **AST Analysis** — Abstract Syntax Tree-based code parsing
+- **Static Analysis** — Built-in static analysis for common code issues
+- **Multi-provider Support** — Works with multiple AI providers
+- **Git Integration** — Direct integration with Git workflows
+- **Onboarding Wizard** — Guided setup for new users
+
+## Pages
+- `/` — Web dashboard and review interface
+
+## Tech Stack
+- Next.js (App Router)
+- TypeScript
+- AI/LLM Integration
+- Terminal UI (TUI)
+- Git
