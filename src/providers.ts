@@ -3,6 +3,12 @@ export interface ProviderDefinition {
     label: string;
     envKeys: string[];
     defaultModel: string;
+    authModes?: Array<'api' | 'subscription'>;
+    runtime?: 'ai-sdk' | 'codex-cli' | 'claude-agent-sdk';
+    requiresApiKey?: boolean;
+    subscriptionSupported?: boolean;
+    subscriptionNote?: string;
+    staticModels?: { label: string; value: string }[];
     baseURL?: string;
     modelListURL?: string;
     authHeaders?: (apiKey: string) => Record<string, string>;
@@ -16,21 +22,60 @@ const bearerAuth = (apiKey: string): Record<string, string> => ({
 
 export const PROVIDERS: ProviderDefinition[] = [
     {
-        id: 'nvidia',
-        label: 'NVIDIA NIM',
-        envKeys: ['AI_CODE_REVIEW_API_KEY', 'NIM_API_KEY', 'NVIDIA_API_KEY'],
-        defaultModel: 'meta/llama-3.1-70b-instruct',
-        baseURL: 'https://integrate.api.nvidia.com/v1',
-        modelListURL: 'https://integrate.api.nvidia.com/v1/models',
+        id: 'opencode',
+        label: 'OpenCode',
+        envKeys: ['OPENCODE_API_KEY', 'AI_CODE_REVIEW_API_KEY'],
+        defaultModel: 'big-pickle',
+        authModes: ['api', 'subscription'],
+        runtime: 'ai-sdk',
+        requiresApiKey: true,
+        subscriptionSupported: true,
+        subscriptionNote: 'Use your OpenCode Zen account key. OpenCode exposes subscription/gateway access through its OpenAI-compatible Zen API.',
+        staticModels: [{ label: 'big-pickle', value: 'big-pickle' }],
+        baseURL: 'https://opencode.ai/zen/v1',
+        modelListURL: 'https://opencode.ai/zen/v1/models',
         authHeaders: bearerAuth,
         modelResponsePath: 'data',
         modelMapper: (model) => ({ label: model.id, value: model.id }),
+    },
+    {
+        id: 'codex',
+        label: 'OpenAI Codex (ChatGPT plan)',
+        envKeys: [],
+        defaultModel: 'codex-default',
+        authModes: ['subscription'],
+        runtime: 'codex-cli',
+        requiresApiKey: false,
+        subscriptionSupported: true,
+        subscriptionNote: 'Uses your official Codex CLI ChatGPT login. Run `codex login` if this provider is not authenticated.',
+        staticModels: [{ label: 'Codex CLI default model', value: 'codex-default' }],
+        modelResponsePath: 'data',
+        modelMapper: () => null,
+    },
+    {
+        id: 'claude-code',
+        label: 'Claude Code (Agent SDK)',
+        envKeys: [],
+        defaultModel: 'claude-default',
+        authModes: ['subscription'],
+        runtime: 'claude-agent-sdk',
+        requiresApiKey: false,
+        subscriptionSupported: true,
+        subscriptionNote: 'Uses the official Claude Agent SDK and your Claude Code account authentication.',
+        staticModels: [{ label: 'Claude Agent SDK default model', value: 'claude-default' }],
+        modelResponsePath: 'data',
+        modelMapper: () => null,
     },
     {
         id: 'anthropic',
         label: 'Anthropic',
         envKeys: ['ANTHROPIC_API_KEY'],
         defaultModel: 'claude-sonnet-4-5',
+        authModes: ['api'],
+        runtime: 'ai-sdk',
+        requiresApiKey: true,
+        subscriptionSupported: false,
+        subscriptionNote: 'For Claude subscription/account access, choose Claude Code (Agent SDK). Anthropic here is the API key provider.',
         modelListURL: 'https://api.anthropic.com/v1/models',
         authHeaders: (apiKey: string) => ({
             'x-api-key': apiKey,
@@ -47,6 +92,8 @@ export const PROVIDERS: ProviderDefinition[] = [
         label: 'Google Gemini',
         envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
         defaultModel: 'gemini-2.5-flash',
+        runtime: 'ai-sdk',
+        requiresApiKey: true,
         modelListURL: 'https://generativelanguage.googleapis.com/v1beta/models',
         authHeaders: (apiKey: string) => ({ 'x-goog-api-key': apiKey }),
         modelResponsePath: 'models',
@@ -63,6 +110,11 @@ export const PROVIDERS: ProviderDefinition[] = [
         label: 'OpenAI',
         envKeys: ['OPENAI_API_KEY'],
         defaultModel: 'gpt-5-mini',
+        authModes: ['api'],
+        runtime: 'ai-sdk',
+        requiresApiKey: true,
+        subscriptionSupported: false,
+        subscriptionNote: 'For ChatGPT Plus/Pro Codex access, choose OpenAI Codex (ChatGPT plan). OpenAI here is the API key provider.',
         baseURL: 'https://api.openai.com/v1',
         modelListURL: 'https://api.openai.com/v1/models',
         authHeaders: bearerAuth,
@@ -78,20 +130,11 @@ export const PROVIDERS: ProviderDefinition[] = [
         label: 'OpenRouter',
         envKeys: ['OPENROUTER_API_KEY'],
         defaultModel: 'openai/gpt-4.1-mini',
+        runtime: 'ai-sdk',
+        requiresApiKey: true,
         baseURL: 'https://openrouter.ai/api/v1',
         modelListURL: 'https://openrouter.ai/api/v1/models',
         authHeaders: () => ({}),
-        modelResponsePath: 'data',
-        modelMapper: (model) => ({ label: model.id, value: model.id }),
-    },
-    {
-        id: 'groq',
-        label: 'Groq',
-        envKeys: ['GROQ_API_KEY'],
-        defaultModel: 'llama-3.3-70b-versatile',
-        baseURL: 'https://api.groq.com/openai/v1',
-        modelListURL: 'https://api.groq.com/openai/v1/models',
-        authHeaders: bearerAuth,
         modelResponsePath: 'data',
         modelMapper: (model) => ({ label: model.id, value: model.id }),
     },
@@ -100,41 +143,10 @@ export const PROVIDERS: ProviderDefinition[] = [
         label: 'Cerebras',
         envKeys: ['CEREBRAS_API_KEY'],
         defaultModel: 'llama-4-scout-17b-16e-instruct',
+        runtime: 'ai-sdk',
+        requiresApiKey: true,
         baseURL: 'https://api.cerebras.ai/v1',
         modelListURL: 'https://api.cerebras.ai/v1/models',
-        authHeaders: bearerAuth,
-        modelResponsePath: 'data',
-        modelMapper: (model) => ({ label: model.id, value: model.id }),
-    },
-    {
-        id: 'mistral',
-        label: 'Mistral',
-        envKeys: ['MISTRAL_API_KEY'],
-        defaultModel: 'mistral-small-latest',
-        baseURL: 'https://api.mistral.ai/v1',
-        modelListURL: 'https://api.mistral.ai/v1/models',
-        authHeaders: bearerAuth,
-        modelResponsePath: 'data',
-        modelMapper: (model) => ({ label: model.id, value: model.id }),
-    },
-    {
-        id: 'together',
-        label: 'Together',
-        envKeys: ['TOGETHER_API_KEY'],
-        defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-        baseURL: 'https://api.together.xyz/v1',
-        modelListURL: 'https://api.together.xyz/v1/models',
-        authHeaders: bearerAuth,
-        modelResponsePath: 'data',
-        modelMapper: (model) => ({ label: model.id, value: model.id }),
-    },
-    {
-        id: 'xai',
-        label: 'xAI',
-        envKeys: ['XAI_API_KEY'],
-        defaultModel: 'grok-3-mini',
-        baseURL: 'https://api.x.ai/v1',
-        modelListURL: 'https://api.x.ai/v1/models',
         authHeaders: bearerAuth,
         modelResponsePath: 'data',
         modelMapper: (model) => ({ label: model.id, value: model.id }),
@@ -160,4 +172,8 @@ export function getProviderEnvKey(providerId: string): string {
     }
 
     return '';
+}
+
+export function providerRequiresApiKey(providerId: string): boolean {
+    return getProviderDefinition(providerId)?.requiresApiKey !== false;
 }
