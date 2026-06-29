@@ -18,6 +18,7 @@ export interface AppConfig {
     apiKey: string | null;
     model: string;
     keys?: Record<string, string>;
+    authMode?: 'api' | 'subscription';
     reviewLanguage?: string;
     uiLanguage?: string;
     reviewTone?: 'balanced' | 'strict';
@@ -25,6 +26,33 @@ export interface AppConfig {
         baseURL?: string;
         modelListURL?: string;
     }>;
+}
+
+export type ReviewScope = 'all' | 'staged' | 'unstaged' | 'uncommitted' | 'committed';
+export type ReviewOutput = 'plain' | 'json' | 'sarif' | 'diff' | 'github';
+
+export interface PathInstruction {
+    path: string;
+    instructions: string;
+}
+
+export interface RepoReviewConfig {
+    reviewProfile?: 'chill' | 'assertive';
+    enabledCategories?: string[];
+    severityThreshold?: string;
+    failOn?: string;
+    ignoredPaths?: string[];
+    guidelineFiles?: string[];
+    customRules?: string[];
+    pathInstructions?: PathInstruction[];
+    pathInstructionsFile?: string;
+    reviewMemory?: boolean;
+    enabledTools?: string[];
+    provider?: string;
+    model?: string;
+    webSearch?: boolean;
+    mcp?: boolean;
+    output?: 'plain' | 'json' | 'sarif';
 }
 
 export interface IndexedFileEntry {

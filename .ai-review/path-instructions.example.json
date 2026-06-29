@@ -1,0 +1,10 @@
+[
+  {
+    "path": "src/**",
+    "instructions": "Flag missing input validation on public functions and unsafe error swallowing."
+  },
+  {
+    "path": "**/*.test.ts",
+    "instructions": "Prefer explicit assertions; avoid testing implementation details."
+  }
+]

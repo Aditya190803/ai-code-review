@@ -1,7 +1,7 @@
 import { getLanguageLabel } from './locales.js';
 import type { AppConfig } from './types.js';
 
-export const SCAN_PROMPT_VERSION = '2026-03-27';
+export const SCAN_PROMPT_VERSION = '2026-06-29';
 
 function buildLanguageInstruction(config: AppConfig): string {
     const language = getLanguageLabel(config.reviewLanguage);
