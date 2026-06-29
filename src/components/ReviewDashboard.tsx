@@ -6,6 +6,8 @@ import { getModel, validateApiKey } from '../config.js';
 import { git, getDiff, getCodeFiles, getChangedCodeFiles } from '../git.js';
 import { ensureProjectIndex, getProjectContext } from '../project-index.js';
 import { scanCodebase } from '../scanner.js';
+import { finalizeIssues, prepareReviewContext } from '../review-shared.js';
+import { writeLastReviewSnapshot } from '../mcp-server.js';
 import { IssueDetailView } from './IssueDetailView.js';
 import { IssueListView, createInitialIssueListState, getIssueListItems } from './IssueListView.js';
 import { ReviewResultView } from './ReviewResultView.js';
@@ -306,17 +308,24 @@ export const ReviewDashboard = ({
                     return;
                 }
 
+                const { repoConfig, reviewContext, memoryStore, useMemory } = await prepareReviewContext();
                 const result = await scanCodebase(config, {
                     onProgress: setScanProgress,
                     onLog: (msg) => setLogs((prev) => [...prev, msg]),
                     onIssuesUpdate: setScanIssues,
                     onReviewUpdate: setReview,
-                }, changedFiles, scanAbortControllerRef.current.signal);
-
+                }, changedFiles, scanAbortControllerRef.current.signal, {
+                    reviewContext,
+                    enabledTools: repoConfig.enabledTools,
+                    webSearch: repoConfig.webSearch === true,
+                });
+                const issues = finalizeIssues(result.issues, repoConfig, memoryStore, useMemory);
+                setScanIssues(issues);
+                await writeLastReviewSnapshot(issues, changedFiles, result.durationSecs);
                 setScanDuration(result.durationSecs);
                 setScanProgress('');
 
-                if (result.issues.length > 0) {
+                if (issues.length > 0) {
                     scanTimerRef.current = setTimeout(
                         () => setViewMode('issues'),
                         800
@@ -350,17 +359,24 @@ export const ReviewDashboard = ({
                     return;
                 }
 
+                const { repoConfig, reviewContext, memoryStore, useMemory } = await prepareReviewContext();
                 const result = await scanCodebase(config, {
                     onProgress: setScanProgress,
                     onLog: (msg) => setLogs((prev) => [...prev, msg]),
                     onIssuesUpdate: setScanIssues,
                     onReviewUpdate: setReview,
-                }, undefined, scanAbortControllerRef.current.signal);
-
+                }, undefined, scanAbortControllerRef.current.signal, {
+                    reviewContext,
+                    enabledTools: repoConfig.enabledTools,
+                    webSearch: repoConfig.webSearch === true,
+                });
+                const issues = finalizeIssues(result.issues, repoConfig, memoryStore, useMemory);
+                setScanIssues(issues);
+                await writeLastReviewSnapshot(issues, await getCodeFiles(), result.durationSecs);
                 setScanDuration(result.durationSecs);
                 setScanProgress('');
 
-                if (result.issues.length > 0) {
+                if (issues.length > 0) {
                     scanTimerRef.current = setTimeout(
                         () => setViewMode('issues'),
                         800

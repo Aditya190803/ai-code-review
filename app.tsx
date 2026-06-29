@@ -6,7 +6,7 @@ import { ReviewDashboard } from './src/components/ReviewDashboard.js';
 import { OnboardingWizard, type OnboardingFlow } from './src/components/OnboardingWizard.js';
 import { FullScreenTerminal, GlobalMouseHandler } from './src/components/TUIUtils.js';
 import type { AppConfig } from './src/types.js';
-import { parseCliArgs, renderHelp, runAuthCommand, runDoctorCommand, runFeedbackCommand, runInitCommand, runMcpCommand, runReviewCommand } from './src/cli.js';
+import { parseCliArgs, renderHelp, runAuthCommand, runDoctorCommand, runFeedbackCommand, runFixCommand, runInitCommand, runMcpCommand, runMetricsCommand, runPolishCommand, runReviewCommand } from './src/cli.js';
 
 const args = process.argv.slice(2);
 const isCI = args.includes('--mode=ci');
@@ -155,6 +155,18 @@ async function main() {
 
         if (parsedCli.command === 'mcp') {
             process.exit(await runMcpCommand());
+        }
+
+        if (parsedCli.command === 'fix') {
+            process.exit(await runFixCommand(parsedCli));
+        }
+
+        if (parsedCli.command === 'metrics') {
+            process.exit(await runMetricsCommand());
+        }
+
+        if (parsedCli.command === 'polish') {
+            process.exit(await runPolishCommand(parsedCli));
         }
 
         const exitCode = await runReviewCommand(parsedCli);

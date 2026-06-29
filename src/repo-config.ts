@@ -1,4 +1,6 @@
 import * as fs from 'fs-extra';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { RepoReviewConfig } from './types.js';
 
 const DEFAULT_REPO_CONFIG = `.ai-review.yaml
@@ -19,6 +21,8 @@ guidelineFiles:
   - .github/copilot-instructions.md
 customRules: []
 reviewMemory: true
+autoApproveMaxFindings: 0
+styleGuideFiles: []
 enabledTools:
   - typescript
   - eslint
@@ -70,16 +74,18 @@ export function parseSimpleYaml(input: string): RepoReviewConfig {
     return config as RepoReviewConfig;
 }
 
+/** User ~/.ai-review.yaml then repo file (repo overrides). */
 export async function loadRepoConfig(paths: string[] = []): Promise<RepoReviewConfig> {
-    const candidates = paths.length > 0 ? paths : ['.ai-review.yaml', '.ai-review.yml'];
     const merged: RepoReviewConfig = {};
-
-    for (const file of candidates) {
-        if (!(await fs.pathExists(file))) continue;
-        const parsed = parseSimpleYaml(await fs.readFile(file, 'utf-8'));
-        Object.assign(merged, parsed);
+    const home = path.join(os.homedir(), '.ai-review.yaml');
+    if (await fs.pathExists(home)) {
+        Object.assign(merged, parseSimpleYaml(await fs.readFile(home, 'utf-8')));
     }
-
+    const repoCandidates = paths.length > 0 ? paths : ['.ai-review.yaml', '.ai-review.yml'];
+    for (const file of repoCandidates) {
+        if (!(await fs.pathExists(file))) continue;
+        Object.assign(merged, parseSimpleYaml(await fs.readFile(file, 'utf-8')));
+    }
     return merged;
 }
 

@@ -15,7 +15,12 @@ AI-powered code review in the terminal, built with React, Ink, Bun, and the Verc
 - Learns from local feedback (`ai-review feedback --down`) to suppress repeated noise via `.ai-review-memory.json`
 - Outputs GitHub PR comment markdown (`--output github`) and diff-inline findings (`--diff`)
 - Ships with repo-level `.ai-review.yaml` initialization and local diagnostics through `doctor`
-- Optional GitHub Actions workflow (`.github/workflows/ai-review.yml`) for PR comments
+- Optional GitHub Actions workflow (`.github/workflows/ai-review.yml`) — PR comment, SARIF upload, check run
+- `enabledTools` runs eslint/ruff/tsc/semgrep/gitleaks/biome when installed; `webSearch: true` adds optional DuckDuckGo context
+- `ai-review fix` / `ai-review polish` for auto-apply and docstrings/tests/simplify
+- `ai-review metrics` and MCP (`ai-review mcp`) for IDE agents
+- `autoApproveMaxFindings` in `.ai-review.yaml` adds merge hint on PR comments
+- User defaults in `~/.ai-review.yaml` merge with repo config
 - Supports mouse-wheel navigation anywhere arrow-key navigation already works
 - Persists provider keys, review language, UI language preference, and review tone
 - Ships with a lightweight demo/docs site under [`web/`](./web)

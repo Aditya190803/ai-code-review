@@ -1,3 +1,4 @@
+import { autoApproveComment } from './pr-approval.js';
 import type { ScanIssue } from './types.js';
 
 export function buildPrWalkthroughSummary(
@@ -51,6 +52,7 @@ export function buildGithubCommentBody(
     files: string[],
     durationSecs: number,
     baseRef?: string,
+    autoApproveMaxFindings?: number,
 ): string {
     const summary = buildPrWalkthroughSummary(issues, files, baseRef);
     const details = issues.length === 0
@@ -68,10 +70,14 @@ export function buildGithubCommentBody(
             '</details>',
         ].join('\n');
 
+    const approval = autoApproveMaxFindings
+        ? autoApproveComment(issues, autoApproveMaxFindings)
+        : '';
     return [
         summary,
         '',
         `Completed in ${durationSecs}s.`,
         details,
+        approval,
     ].filter(Boolean).join('\n');
 }

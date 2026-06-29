@@ -7,7 +7,10 @@ import { isExternalProvider, runExternalStructuredReview } from './provider-runt
 import { git, getCodeFiles } from './git.js';
 import { analyzeFileStatic } from './static-analysis.js';
 import { extractMeaningfulCode } from './ast.js';
+import { buildCallGraphContext } from './call-graph.js';
+import { runExternalTools } from './external-tools.js';
 import { ensureProjectIndex, getProjectContext } from './project-index.js';
+import { fetchWebContextForReview, webSearchQueryFromIssues } from './web-search.js';
 import { getScanSystemPrompt, SCAN_PROMPT_VERSION, TRIAGE_SYSTEM_PROMPT } from './prompts.js';
 import { formatReviewContextForPrompt, type ReviewContextBundle } from './review-context.js';
 import type { ScanIssue, AppConfig, ProjectIndex } from './types.js';
@@ -204,6 +207,7 @@ interface CachedScanEntry {
 interface ScanRuntime {
     config: AppConfig;
     reviewContext?: ReviewContextBundle;
+    webSearchContext?: string;
     callbacks: ScanCallbacks;
     filesToScan?: string[];
     abortSignal?: AbortSignal;
@@ -236,9 +240,10 @@ function renderScanProgress(completedCount: number, totalCount: number, phase2St
 
 function buildFileTaskContext(runtime: ScanRuntime, file: string, content: string): FileTaskContext {
     const hash = createHash('sha256').update(content).digest('hex');
-    const projectContext = getProjectContext(runtime.projectIndex, file, {
-        changedFiles: runtime.filesToScan,
-    });
+    const projectContext = [
+        getProjectContext(runtime.projectIndex, file, { changedFiles: runtime.filesToScan }),
+        buildCallGraphContext(runtime.projectIndex, file),
+    ].filter(Boolean).join('\n\n');
     const currentContextHash = createHash('sha256').update(projectContext).digest('hex');
 
     return {
@@ -337,7 +342,8 @@ async function runDeepScan(runtime: ScanRuntime, file: string, contentToSend: st
     const teamContext = runtime.reviewContext
         ? formatReviewContextForPrompt(file, runtime.reviewContext)
         : '';
-    const prompt = `File: ${file}\n${reviewModeInstruction}\n\nProject context:\n${projectContext || 'No additional project context available.'}${teamContext ? `\n\nTeam and path context:\n${teamContext}` : ''}\n\nContents/Diff:\n\`\`\`\n${contentToSend}\n\`\`\``;
+    const webCtx = runtime.webSearchContext ? `\n\n${runtime.webSearchContext}` : '';
+    const prompt = `File: ${file}\n${reviewModeInstruction}\n\nProject context:\n${projectContext || 'No additional project context available.'}${teamContext ? `\n\nTeam and path context:\n${teamContext}` : ''}${webCtx}\n\nContents/Diff:\n\`\`\`\n${contentToSend}\n\`\`\``;
 
     if (isExternalProvider(runtime.config)) {
         const parsed = await withRetry(async () => {
@@ -496,6 +502,7 @@ async function saveScanCache(cacheFile: string, cache: Record<string, CachedScan
 function createScanRuntime(params: {
     config: AppConfig;
     reviewContext?: ReviewContextBundle;
+    webSearchContext?: string;
     callbacks: ScanCallbacks;
     filesToScan?: string[];
     abortSignal?: AbortSignal;
@@ -508,6 +515,7 @@ function createScanRuntime(params: {
     return {
         config: params.config,
         reviewContext: params.reviewContext,
+        webSearchContext: params.webSearchContext,
         callbacks: params.callbacks,
         filesToScan: params.filesToScan,
         abortSignal: params.abortSignal,
@@ -522,13 +530,22 @@ function createScanRuntime(params: {
     };
 }
 
+export interface ScanCodebaseOptions {
+    reviewContext?: ReviewContextBundle;
+    enabledTools?: string[];
+    webSearch?: boolean;
+}
+
 export async function scanCodebase(
     config: AppConfig,
     callbacks: ScanCallbacks,
     filesToScan?: string[],
     abortSignal?: AbortSignal,
-    reviewContext?: ReviewContextBundle,
+    options?: ScanCodebaseOptions | ReviewContextBundle,
 ): Promise<ScanResult> {
+    const opts: ScanCodebaseOptions = options && 'globalGuidelines' in (options as ReviewContextBundle)
+        ? { reviewContext: options as ReviewContextBundle }
+        : (options as ScanCodebaseOptions) || {};
     const scanStartTime = Date.now();
 
     callbacks.onProgress('Discovering files...');
@@ -544,12 +561,14 @@ export async function scanCodebase(
 
     const fileContents = await loadCodeFileContents(codeFiles);
     const staticResults = runStaticScan(fileContents);
+    const toolIssues = await runExternalTools(opts.enabledTools, codeFiles);
+    const combinedStatic = [...staticResults, ...toolIssues];
 
-    if (staticResults.length > 0) {
+    if (combinedStatic.length > 0) {
         callbacks.onLog(
-            `⚡ Fast static scan complete: ${staticResults.length} issues`
+            `⚡ Static + tools scan: ${combinedStatic.length} issues`
         );
-        callbacks.onIssuesUpdate([...staticResults]);
+        callbacks.onIssuesUpdate([...combinedStatic]);
     }
 
     const concurrency = Math.min(PROVIDER_CONCURRENCY[config.provider] || 5, 10);
@@ -575,13 +594,21 @@ export async function scanCodebase(
         onLog: callbacks.onLog,
     });
 
+    let webSearchContext = '';
+    if (opts.webSearch && combinedStatic.length > 0) {
+        const q = webSearchQueryFromIssues(combinedStatic, codeFiles);
+        webSearchContext = await fetchWebContextForReview(q);
+        if (webSearchContext) callbacks.onLog('🌐 Added optional web context to AI prompts');
+    }
+
     const runtime = createScanRuntime({
         config,
-        reviewContext,
+        reviewContext: opts.reviewContext,
+        webSearchContext,
         callbacks,
         filesToScan,
         abortSignal,
-        staticResults,
+        staticResults: combinedStatic,
         cache,
         scanCacheKey,
         projectIndex,
@@ -594,7 +621,7 @@ export async function scanCodebase(
 
     await saveScanCache(CACHE_FILE, cache);
 
-    const finalIssues = deduplicateIssues([...staticResults, ...runtime.allAiIssues]);
+    const finalIssues = deduplicateIssues([...combinedStatic, ...runtime.allAiIssues]);
     callbacks.onIssuesUpdate(finalIssues);
     callbacks.onProgress('');
 

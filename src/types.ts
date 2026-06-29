@@ -52,7 +52,9 @@ export interface RepoReviewConfig {
     model?: string;
     webSearch?: boolean;
     mcp?: boolean;
-    output?: 'plain' | 'json' | 'sarif';
+    output?: 'plain' | 'json' | 'sarif' | 'diff' | 'github';
+    autoApproveMaxFindings?: number;
+    styleGuideFiles?: string[];
 }
 
 export interface IndexedFileEntry {

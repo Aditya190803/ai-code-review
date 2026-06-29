@@ -143,11 +143,19 @@ export async function renderReview(
     issues: ScanIssue[],
     durationSecs: number,
     files: string[],
-    options?: { baseRef?: string },
+    options?: { baseRef?: string; autoApproveMaxFindings?: number },
 ): Promise<string> {
     if (output === 'json') return renderJsonReview(issues, durationSecs, files);
     if (output === 'sarif') return renderSarifReview(issues, durationSecs, files);
     if (output === 'diff') return renderDiffReview(issues, durationSecs, files);
-    if (output === 'github') return buildGithubCommentBody(issues, files, durationSecs, options?.baseRef);
+    if (output === 'github') {
+        return buildGithubCommentBody(
+            issues,
+            files,
+            durationSecs,
+            options?.baseRef,
+            options?.autoApproveMaxFindings,
+        );
+    }
     return renderPlainReview(issues, durationSecs, files);
 }

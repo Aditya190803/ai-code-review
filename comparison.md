@@ -178,12 +178,12 @@
 
 | # | Feature | Why it matters | Present in |
 |---|---------|---------------|------------|
-| 1 | **PR integration** (GitHub/GitLab checks, inline comments, auto-review on PR events) | Turns CLI tool into a CI-native reviewer that works in team PR workflows | All three |
-| 2 | **Learning/memory system** (adapts to team feedback, suppresses noise) | Without this, every review is a cold start; no signal improvement over time | Greptile, Macroscope |
-| 3 | **Auto-fix PRs / fix application** (apply suggested fixes automatically) | Saves developer time — the most requested productivity feature | All three |
-| 4 | **Custom rules & instructions** (glob-scoped, path-based review guidance) | Teams need to enforce domain-specific standards per directory | All three |
-| 5 | **IDE integration** (MCP server or VS Code extension) | Reviews need to surface where developers work | CodeRabbit, Greptile |
-| 6 | **Web dashboard** (metrics, review history, addressed-rate tracking) | Without data, teams can't measure improvement | All three |
+| 1 | **PR integration** | **Partial:** GH Action (comment + SARIF + check run); no GitLab, no inline diff comments | All three |
+| 2 | **Learning/memory** | **Done (local):** `.ai-review-memory.json`, `ai-review feedback` | Greptile, Macroscope |
+| 3 | **Auto-fix** | **Partial:** `ai-review fix` applies model patches; no auto PR branch | All three |
+| 4 | **Custom rules & path instructions** | **Done:** YAML rules, path-instructions.json, style guides | All three |
+| 5 | **IDE / MCP** | **Partial:** MCP stdio `list_findings` / `get_issue`; no VS Code extension | CodeRabbit, Greptile |
+| 6 | **Web dashboard** | **Partial:** `ai-review metrics` CLI summary; no web UI | All three |
 
 ### Tier 2 — Differentiators
 

@@ -7,6 +7,8 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  security-events: write
+  checks: write
 
 jobs:
   review:
@@ -30,7 +32,41 @@ jobs:
           AI_CODE_REVIEW_API_KEY: ${{ secrets.AI_CODE_REVIEW_API_KEY }}
         run: |
           BASE="${{ github.base_ref }}"
+          bun run dist/app.js review --base "$BASE" --output sarif --output-file review.sarif --fail-on none || true
           bun run dist/app.js review --base "$BASE" --output github --output-file review-comment.md --fail-on none || true
+
+      - name: Upload SARIF
+        if: always() && hashFiles('review.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: review.sarif
+          category: ai-review
+
+      - name: Create check run
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let conclusion = 'success';
+            let summary = 'AI review completed.';
+            if (fs.existsSync('review.sarif')) {
+              const sarif = JSON.parse(fs.readFileSync('review.sarif', 'utf8'));
+              const results = sarif.runs?.[0]?.results || [];
+              const errors = results.filter((r) => r.level === 'error').length;
+              if (errors > 0) conclusion = 'failure';
+              summary = `${results.length} finding(s), ${errors} error-level`;
+            }
+            const sha = context.payload.pull_request.head.sha;
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'ai-review',
+              head_sha: sha,
+              status: 'completed',
+              conclusion,
+              output: { title: 'AI Code Review', summary },
+            });
 
       - name: Post PR comment
         if: always() && hashFiles('review-comment.md') != ''

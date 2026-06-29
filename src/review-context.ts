@@ -83,8 +83,12 @@ export async function buildReviewContextBundle(repoConfig: RepoReviewConfig): Pr
     const fromFile = await loadPathInstructionsFile(instructionsFile);
     const pathInstructions = [...(repoConfig.pathInstructions || []), ...fromFile];
 
+    const guidePaths = [
+        ...(repoConfig.guidelineFiles || []),
+        ...(repoConfig.styleGuideFiles || []),
+    ];
     return {
-        globalGuidelines: await loadGuidelineText(repoConfig.guidelineFiles || []),
+        globalGuidelines: await loadGuidelineText(guidePaths),
         pathInstructions,
         customRules: (repoConfig.customRules || []).map((r) => String(r).trim()).filter(Boolean),
     };

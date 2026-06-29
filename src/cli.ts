@@ -4,15 +4,18 @@ import { git, getBaseCodeFiles, getBaseCommitCodeFiles, getChangedCodeFiles, get
 import { getProviderDefinition, providerRequiresApiKey, PROVIDERS } from './providers.js';
 import { loadConfig, normalizeConfig, validateApiKey } from './config.js';
 import { initRepoConfig, loadRepoConfig } from './repo-config.js';
-import { buildReviewContextBundle } from './review-context.js';
-import { writeLastReviewSnapshot } from './mcp-server.js';
-import { filterSuppressedIssues, loadReviewMemory } from './review-memory.js';
+import { applyFixesFromSnapshot, applyFixForIssue } from './apply-fix.js';
+import { runFinishingTouch, type FinishingAction } from './finishing-touches.js';
+import { readLastReviewSnapshot, writeLastReviewSnapshot } from './mcp-server.js';
+import { loadReviewMemory, recordReviewFeedback, saveReviewMemory } from './review-memory.js';
+import { loadReviewMetrics, recordReviewRun, renderMetricsSummary } from './review-metrics.js';
+import { finalizeIssues, prepareReviewContext } from './review-shared.js';
 import { scanCodebase } from './scanner.js';
 import { renderReview } from './reporters.js';
 import type { AppConfig, RepoReviewConfig, ReviewOutput, ReviewScope, ScanIssue } from './types.js';
 
 export interface ParsedCli {
-    command: 'review' | 'auth' | 'doctor' | 'init' | 'help' | 'interactive' | 'feedback' | 'mcp';
+    command: 'review' | 'auth' | 'doctor' | 'init' | 'help' | 'interactive' | 'feedback' | 'mcp' | 'fix' | 'metrics' | 'polish';
     subcommand?: string;
     interactive: boolean;
     agent: boolean;
@@ -29,6 +32,12 @@ export interface ParsedCli {
     feedbackUp?: boolean;
     feedbackFile?: string;
     feedbackTitle?: string;
+    fixDryRun?: boolean;
+    fixMax?: number;
+    fixFile?: string;
+    fixTitle?: string;
+    polishAction?: FinishingAction;
+    polishFile?: string;
 }
 
 const severityRank: Record<string, number> = {
@@ -62,7 +71,7 @@ export function parseCliArgs(args: string[]): ParsedCli {
         diffOutput: false,
     };
 
-    if (!['review', 'auth', 'doctor', 'init', 'help', 'interactive', 'feedback', 'mcp'].includes(parsed.command)) {
+    if (!['review', 'auth', 'doctor', 'init', 'help', 'interactive', 'feedback', 'mcp', 'fix', 'metrics', 'polish'].includes(parsed.command)) {
         parsed.command = 'review';
     }
 
@@ -144,6 +153,36 @@ export function parseCliArgs(args: string[]): ParsedCli {
         } else if (arg.startsWith('--title=')) {
             parsed.feedbackTitle = readFlagValue(options, i);
         }
+        else if (arg === '--dry-run') parsed.fixDryRun = true;
+        else if (arg === '--max') {
+            parsed.fixMax = Number(options[i + 1]) || 3;
+            i++;
+        } else if (arg.startsWith('--max=')) {
+            parsed.fixMax = Number(readFlagValue(options, i)) || 3;
+        }
+        else if (arg === '--action') {
+            parsed.polishAction = options[i + 1] as FinishingAction;
+            i++;
+        } else if (arg.startsWith('--action=')) {
+            parsed.polishAction = readFlagValue(options, i) as FinishingAction;
+        }
+    }
+
+    if (parsed.command === 'fix') {
+        for (let i = 0; i < options.length; i++) {
+            const arg = options[i];
+            if (arg === '--file') { parsed.fixFile = options[i + 1]; i++; }
+            else if (arg.startsWith('--file=')) parsed.fixFile = readFlagValue(options, i);
+            else if (arg === '--title') { parsed.fixTitle = options[i + 1]; i++; }
+            else if (arg.startsWith('--title=')) parsed.fixTitle = readFlagValue(options, i);
+        }
+    }
+    if (parsed.command === 'polish') {
+        for (let i = 0; i < options.length; i++) {
+            const arg = options[i];
+            if (arg === '--file') { parsed.polishFile = options[i + 1]; i++; }
+            else if (arg.startsWith('--file=')) parsed.polishFile = readFlagValue(options, i);
+        }
     }
 
     return parsed;
@@ -165,6 +204,9 @@ export function renderHelp(): string {
         '  ai-review init',
         '  ai-review auth status|logout',
         '  ai-review mcp',
+        '  ai-review fix [--dry-run] [--max 3] [--file path --title "issue"]',
+        '  ai-review polish --action docstring|tests|simplify|merge-hints --file path',
+        '  ai-review metrics',
         '',
         'Defaults:',
         '  provider: opencode',
@@ -239,7 +281,7 @@ async function writeOrPrintReport(parsed: ParsedCli, report: string): Promise<vo
 }
 
 export async function runReviewCommand(parsed: ParsedCli): Promise<number> {
-    const repoConfig = await loadRepoConfig(parsed.configPaths);
+    const { repoConfig, reviewContext, memoryStore, useMemory } = await prepareReviewContext(parsed.configPaths);
     const config = mergeRepoConfig(await loadConfig(), parsed, repoConfig.provider, repoConfig.model);
     const files = filterIgnoredFiles(await resolveFiles(parsed), repoConfig);
     const output = resolveOutput(parsed, repoConfig);
@@ -282,10 +324,6 @@ export async function runReviewCommand(parsed: ParsedCli): Promise<number> {
         return 2;
     }
 
-    const reviewContext = await buildReviewContextBundle(repoConfig);
-    const useMemory = repoConfig.reviewMemory !== false;
-    const memoryStore = useMemory ? await loadReviewMemory() : { version: 1 as const, entries: [] };
-
     const result = await scanCodebase(config, {
         onProgress: (message) => {
             if (!message) return;
@@ -302,14 +340,16 @@ export async function runReviewCommand(parsed: ParsedCli): Promise<number> {
             }
         },
         onReviewUpdate: () => {},
-    }, files, undefined, reviewContext);
+    }, files, undefined, {
+        reviewContext,
+        enabledTools: repoConfig.enabledTools,
+        webSearch: repoConfig.webSearch === true,
+    });
 
-    let issues = filterIssuesByThreshold(result.issues, repoConfig.severityThreshold);
-    if (useMemory) {
-        issues = filterSuppressedIssues(issues, memoryStore);
-    }
+    const issues = finalizeIssues(result.issues, repoConfig, memoryStore, useMemory);
 
     await writeLastReviewSnapshot(issues, files, result.durationSecs);
+    await recordReviewRun(issues, files, result.durationSecs, parsed.scope);
 
     if (parsed.agent) {
         logAgentEvent('complete', {
@@ -318,7 +358,10 @@ export async function runReviewCommand(parsed: ParsedCli): Promise<number> {
             durationSecs: result.durationSecs,
         });
     } else {
-        await writeOrPrintReport(parsed, await renderReview(output, issues, result.durationSecs, files, { baseRef: parsed.base }));
+        await writeOrPrintReport(parsed, await renderReview(output, issues, result.durationSecs, files, {
+            baseRef: parsed.base,
+            autoApproveMaxFindings: repoConfig.autoApproveMaxFindings,
+        }));
     }
 
     const failOn = parsed.failOn || repoConfig.failOn || 'critical';
@@ -367,7 +410,6 @@ export async function runDoctorCommand(): Promise<number> {
 }
 
 export async function runFeedbackCommand(parsed: ParsedCli): Promise<number> {
-    const { recordReviewFeedback, saveReviewMemory } = await import('./review-memory.js');
     if (!parsed.feedbackFile || !parsed.feedbackTitle) {
         console.error('Usage: ai-review feedback --down|--up --file <path> --title "finding title"');
         return 2;
@@ -400,6 +442,62 @@ export async function runMcpCommand(): Promise<number> {
     const { runMcpStdioServer } = await import('./mcp-server.js');
     await runMcpStdioServer();
     return 0;
+}
+
+export async function runFixCommand(parsed: ParsedCli): Promise<number> {
+    const repoConfig = await loadRepoConfig(parsed.configPaths);
+    const config = mergeRepoConfig(await loadConfig(), parsed, repoConfig.provider, repoConfig.model);
+    if (providerRequiresApiKey(config.provider) && !config.apiKey) {
+        console.error('Missing API key for fix command.');
+        return 2;
+    }
+    const snap = await readLastReviewSnapshot();
+    if (!snap?.issues.length && !(parsed.fixFile && parsed.fixTitle)) {
+        console.error('No snapshot. Run `ai-review review` first, or pass --file and --title.');
+        return 2;
+    }
+    if (parsed.fixFile && parsed.fixTitle) {
+        const issue = snap?.issues.find((i) => i.file === parsed.fixFile && i.title === parsed.fixTitle)
+            || {
+                category: 'style',
+                severity: 'warning',
+                title: parsed.fixTitle,
+                line: 1,
+                lineEnd: 1,
+                codeContext: '',
+                description: '',
+                suggestedFix: '',
+                aiPrompt: parsed.fixTitle,
+                file: parsed.fixFile,
+            };
+        const r = await applyFixForIssue(config, issue, { dryRun: parsed.fixDryRun });
+        console.log(`${r.file}: ${r.message}`);
+        return r.applied || parsed.fixDryRun ? 0 : 1;
+    }
+    const results = await applyFixesFromSnapshot(config, snap!.issues, {
+        dryRun: parsed.fixDryRun,
+        max: parsed.fixMax ?? 3,
+    });
+    for (const r of results) console.log(`${r.file}: ${r.message}`);
+    return results.some((r) => r.applied) ? 0 : 1;
+}
+
+export async function runMetricsCommand(): Promise<number> {
+    const store = await loadReviewMetrics();
+    console.log(renderMetricsSummary(store));
+    return 0;
+}
+
+export async function runPolishCommand(parsed: ParsedCli): Promise<number> {
+    const repoConfig = await loadRepoConfig(parsed.configPaths);
+    const config = mergeRepoConfig(await loadConfig(), parsed, repoConfig.provider, repoConfig.model);
+    if (!parsed.polishFile || !parsed.polishAction) {
+        console.error('Usage: ai-review polish --action docstring|tests|simplify|merge-hints --file <path>');
+        return 2;
+    }
+    const r = await runFinishingTouch(config, parsed.polishAction, parsed.polishFile);
+    console.log(r.message);
+    return r.ok ? 0 : 1;
 }
 
 export async function runInitCommand(): Promise<number> {
