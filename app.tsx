@@ -1,58 +1,37 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Box, Text, render, useApp } from 'ink';
 import { loadConfig, saveConfig } from './src/config.js';
+import { providerRequiresApiKey } from './src/providers.js';
 import { ReviewDashboard } from './src/components/ReviewDashboard.js';
-import { OnboardingWizard } from './src/components/OnboardingWizard.js';
+import { OnboardingWizard, type OnboardingFlow } from './src/components/OnboardingWizard.js';
 import { FullScreenTerminal, GlobalMouseHandler } from './src/components/TUIUtils.js';
-import { scanCodebase } from './src/scanner.js';
 import type { AppConfig } from './src/types.js';
+import { parseCliArgs, renderHelp, runAuthCommand, runDoctorCommand, runFeedbackCommand, runInitCommand, runMcpCommand, runReviewCommand } from './src/cli.js';
 
-// ── Headless CI Mode ──
 const args = process.argv.slice(2);
 const isCI = args.includes('--mode=ci');
+const isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+const parsedCli = parseCliArgs(isCI ? ['review', '--all'] : args);
 
-if (isCI) {
-    console.log('🚀 Starting AI Code Review in CI mode...');
-    (async () => {
-        try {
-            const config = await loadConfig();
+// Flags that indicate the user wants non-interactive execution
+const hasMeaningfulFlags = args.some(a =>
+    a.startsWith('--') && !['--interactive', '--mode=tui', '--mode=ci'].includes(a.split('=')[0])
+);
 
-            if (!config.apiKey) {
-                console.error('❌ Error: No API key found. Please run interactively first or set environment variables.');
-                process.exit(1);
-            }
+const shouldLaunchInteractive =
+    isTTY &&
+    !hasMeaningfulFlags &&
+    ((!isCI && args.length === 0) ||
+    parsedCli.command === 'interactive' ||
+    parsedCli.interactive ||
+    args.includes('--mode=tui'));
 
-            const { issues, durationSecs } = await scanCodebase(config, {
-                onProgress: (msg) => { if (msg) console.log(msg); },
-                onLog: (msg) => console.log(msg),
-                onIssuesUpdate: () => { },
-                onReviewUpdate: () => { },
-            });
-
-            console.log(`\n✅ Scan complete in ${durationSecs}s. Found ${issues.length} issues.`);
-
-            const criticals = issues.filter(i => i.severity === 'critical');
-            if (criticals.length > 0) {
-                console.error(`\n❌ Found ${criticals.length} CRITICAL issues! Failing CI build.`);
-                criticals.forEach((issue, idx) => {
-                    console.error(`[CRITICAL ${idx + 1}] ${issue.file}:${issue.line} - ${issue.title}`);
-                });
-                process.exit(1);
-            }
-
-            process.exit(0);
-        } catch (e) {
-            console.error('❌ CI Scan failed:', e);
-            process.exit(1);
-        }
-    })();
-} else {
-    // ── Interactive TUI Mode ──
-    const Root = () => {
+const Root = ({ forceConfigure = false }: { forceConfigure?: boolean }) => {
         const { exit } = useApp();
         const [config, setConfig] = useState<AppConfig | null>(null);
         const [isConfigLoaded, setIsConfigLoaded] = useState(false);
-        const [isConfiguring, setIsConfiguring] = useState(false);
+        const [isConfiguring, setIsConfiguring] = useState(forceConfigure);
+        const [configFlow, setConfigFlow] = useState<OnboardingFlow>(forceConfigure ? 'setup' : 'settings');
         const isMountedRef = useRef(true);
 
         const refreshConfig = async () => {
@@ -80,7 +59,7 @@ if (isCI) {
         }, []);
 
         const handleCancel = () => {
-            if (config?.apiKey) {
+            if (config && (!providerRequiresApiKey(config.provider) || config.apiKey)) {
                 void (async () => {
                     await refreshConfig();
                     if (isMountedRef.current) {
@@ -118,12 +97,13 @@ if (isCI) {
             );
         }
 
-        if (!config.apiKey || isConfiguring) {
+        if (!config || (providerRequiresApiKey(config.provider) && !config.apiKey) || isConfiguring) {
             return (
                 <FullScreenTerminal>
                     <GlobalMouseHandler />
                     <OnboardingWizard
-                        initialConfig={config}
+                        initialConfig={config || undefined}
+                        flow={!config || (providerRequiresApiKey(config.provider) && !config.apiKey) ? 'setup' : configFlow}
                         onCancel={handleCancel}
                         onComplete={handleComplete}
                     />
@@ -137,12 +117,59 @@ if (isCI) {
                 <ReviewDashboard
                     config={config}
                     onResetConfig={() => {
+                        setConfigFlow('settings');
                         setIsConfiguring(true);
                     }}
                 />
             </FullScreenTerminal>
         );
-    };
+};
 
-    render(<Root />, { exitOnCtrlC: false });
+async function main() {
+    if (shouldLaunchInteractive) {
+        render(<Root />, { exitOnCtrlC: false });
+        return;
+    }
+
+    try {
+        if (parsedCli.command === 'help' || args.includes('--help') || args.includes('-h')) {
+            console.log(renderHelp());
+            return;
+        }
+
+        if (parsedCli.command === 'doctor') {
+            process.exit(await runDoctorCommand());
+        }
+
+        if (parsedCli.command === 'init') {
+            process.exit(await runInitCommand());
+        }
+
+        if (parsedCli.command === 'auth') {
+            process.exit(await runAuthCommand(parsedCli));
+        }
+
+        if (parsedCli.command === 'feedback') {
+            process.exit(await runFeedbackCommand(parsedCli));
+        }
+
+        if (parsedCli.command === 'mcp') {
+            process.exit(await runMcpCommand());
+        }
+
+        const exitCode = await runReviewCommand(parsedCli);
+        process.exit(exitCode);
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.includes('Raw mode') || msg.includes('stdin')) {
+            console.error('This tool requires an interactive terminal for the setup wizard.');
+            console.error('Run with flags (e.g., `ai-review review --type all`) for non-interactive mode,');
+            console.error('or set the API key via environment variable (e.g., OPENCODE_API_KEY=...).');
+        } else {
+            console.error(msg);
+        }
+        process.exit(1);
+    }
 }
+
+void main();
