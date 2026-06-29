@@ -30,6 +30,10 @@ export function SelectableList({
     const [selectedIndex, setSelectedIndex] = useState(() => clampIndex(initialIndex));
     const [startIndex, setStartIndex] = useState(0);
     const hasItems = items.length > 0;
+    const wrapIndex = (index: number) => {
+        if (items.length === 0) return 0;
+        return (index + items.length) % items.length;
+    };
 
     const visibleLimit = useMemo(() => {
         if (typeof limit === 'number') {
@@ -61,9 +65,9 @@ export function SelectableList({
 
         setSelectedIndex((prev) => {
             if (direction === 'up') {
-                return Math.max(0, prev - 1);
+                return wrapIndex(prev - 1);
             }
-            return Math.min(items.length - 1, prev + 1);
+            return wrapIndex(prev + 1);
         });
     }, hasItems);
 
@@ -74,12 +78,12 @@ export function SelectableList({
 
         if (key.upArrow) {
             if (!allowArrow('up')) return;
-            setSelectedIndex((prev) => Math.max(0, prev - 1));
+            setSelectedIndex((prev) => wrapIndex(prev - 1));
             return;
         }
         if (key.downArrow) {
             if (!allowArrow('down')) return;
-            setSelectedIndex((prev) => Math.min(items.length - 1, prev + 1));
+            setSelectedIndex((prev) => wrapIndex(prev + 1));
             return;
         }
         if (key.pageUp) {

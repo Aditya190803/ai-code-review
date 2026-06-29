@@ -11,16 +11,16 @@ const DashboardScreen = () => (
     animate={{ opacity: 1 }}
     exit={{ opacity: 0 }}
     transition={{ duration: 0.3 }}
-    className="absolute inset-0 flex flex-col w-full h-full p-6 text-zinc-400 font-mono text-[13px] sm:text-[14px]"
+    className="absolute inset-0 flex flex-col w-full h-full p-6 text-zinc-400 font-[family-name:var(--font-jetbrains)] text-[13px] sm:text-[14px]"
   >
     <div className="flex-1 flex flex-col items-center pt-8">
-      <pre className="font-bold text-[10px] sm:text-[14px] leading-[1.1] tracking-widest text-transparent bg-clip-text bg-gradient-to-b from-rose-500 via-orange-400 to-amber-400 mb-8 select-none">
+      <pre className="font-bold text-[10px] sm:text-[14px] leading-[1.1] tracking-widest text-transparent bg-clip-text bg-gradient-to-b from-indigo-400 via-violet-400 to-purple-400 mb-8 select-none">
 {`   █████╗ ██╗ ██████╗██████╗ ███████╗██╗   ██╗██╗███████╗██╗    ██╗
-  ██╔══██╗██║ ╚═════╝██╔══██╗██╔════╝██║   ██║██║██╔════╝██║    ██║
-  ███████║██║ █████╗ ██████╔╝█████╗  ██║   ██║██║█████╗  ██║ █╗ ██║
-  ██╔══██║██║ ╚════╝ ██╔══██╗██╔══╝  ╚██╗ ██╔╝██║██╔══╝  ██║███╗██║
-  ██║  ██║██║        ██║  ██║███████╗ ╚████╔╝ ██║███████╗╚███╔███╔╝
-  ╚═╝  ╚═╝╚═╝        ╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝`}
+   ██╔══██╗██║ ╚═════╝██╔══██╗██╔════╝██║   ██║██║██╔════╝██║    ██║
+   ███████║██║ █████╗ ██████╔╝█████╗  ██║   ██║██║█████╗  ██║ █╗ ██║
+   ██╔══██║██║ ╚════╝ ██╔══██╗██╔══╝  ╚██╗ ██╔╝██║██╔══╝  ██║███╗██║
+   ██║  ██║██║        ██║  ██║███████╗ ╚████╔╝ ██║███████╗╚███╔███╔╝
+   ╚═╝  ╚═╝╚═╝        ╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝`}
       </pre>
       
       <div className="grid grid-cols-[1fr_auto_1fr] text-[13px] gap-x-3 gap-y-1 mb-8">
@@ -80,10 +80,10 @@ const ScanningScreen = () => (
     animate={{ opacity: 1 }}
     exit={{ opacity: 0 }}
     transition={{ duration: 0.3 }}
-    className="absolute inset-0 flex flex-col items-center justify-center w-full h-full p-6 text-zinc-400 font-mono text-[13px]"
+    className="absolute inset-0 flex flex-col items-center justify-center w-full h-full p-6 text-zinc-400 font-[family-name:var(--font-jetbrains)] text-[13px]"
   >
     <div className="space-y-6 text-center">
-      <div className="text-[#5ea1ff] font-medium tracking-wide">Scanning Codebase...</div>
+      <div className="text-indigo-400 font-medium tracking-wide">Scanning Codebase...</div>
       <div className="text-[#eab308] tracking-wide">Discovering files...</div>
     </div>
     <div className="absolute bottom-6 left-0 right-0 text-center text-zinc-600 text-[13px]">
@@ -99,7 +99,7 @@ const ListScreen = () => (
     animate={{ opacity: 1 }}
     exit={{ opacity: 0 }}
     transition={{ duration: 0.3 }}
-    className="absolute inset-0 flex flex-col w-full h-full p-4 sm:p-5 text-zinc-300 font-mono text-[11px] sm:text-[12px] leading-relaxed"
+    className="absolute inset-0 flex flex-col w-full h-full p-4 sm:p-5 text-zinc-300 font-[family-name:var(--font-jetbrains)] text-[11px] sm:text-[12px] leading-relaxed"
   >
     <div className="flex justify-between items-center mb-1 text-zinc-400">
       <div>Filter: Press / to filter files</div>
@@ -171,7 +171,7 @@ const ListScreen = () => (
         <div>[o] Toggle all</div>
       </div>
       
-      <div className="flex gap-x-3 gap-y-1 flex-wrap text-zinc-500 text-[10px] sm:text-[11px] font-mono leading-tight">
+      <div className="flex gap-x-3 gap-y-1 flex-wrap text-zinc-500 text-[10px] sm:text-[11px] font-[family-name:var(--font-jetbrains)] leading-tight">
         <span>↑↓ or mouse wheel navigate</span><span>·</span>
         <span>↔ collapse/open</span><span>·</span>
         <span>PgUp/PgDn jump</span><span>·</span>
@@ -207,18 +207,18 @@ export function TerminalDemo() {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.7, delay: 0.2 }}
-      className="w-full max-w-4xl mx-auto overflow-hidden border border-zinc-800/80 shadow-2xl relative mt-4 rounded-xl bg-[#2e3440] shadow-black/80"
+      className="w-full max-w-4xl mx-auto overflow-hidden border border-white/[0.06] shadow-[0_0_80px_rgba(99,102,241,0.08)] relative mt-4 rounded-2xl bg-[#0a0a0c]"
     >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-900/50 bg-[#21222c]">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-900/50 bg-[#0c0c0e]">
         <div className="flex gap-2">
-          <div className="w-3 h-3 rounded-full bg-[#ff5f56]" />
-          <div className="w-3 h-3 rounded-full bg-[#ffbd2e]" />
-          <div className="w-3 h-3 rounded-full bg-[#27c93f]" />
+          <div className="w-3 h-3 rounded-full bg-[#ff5f57]" />
+          <div className="w-3 h-3 rounded-full bg-[#febc2e]" />
+          <div className="w-3 h-3 rounded-full bg-[#28c840]" />
         </div>
-        <div className="absolute left-1/2 -translate-x-1/2 text-xs font-mono text-zinc-500">~/repo/ai-code-review</div>
+        <div className="absolute left-1/2 -translate-x-1/2 text-xs font-[family-name:var(--font-jetbrains)] text-zinc-500">~/repo/ai-code-review</div>
       </div>
       
-      <div className="relative w-full h-[600px] sm:h-[650px] bg-[#282a36] text-left overflow-hidden">
+      <div className="relative w-full h-[520px] sm:h-[560px] bg-[#0a0a0c] text-left overflow-hidden">
         <AnimatePresence mode="wait">
           {step === 0 && <DashboardScreen key="ds" />}
           {step === 1 && <ScanningScreen key="ss" />}
