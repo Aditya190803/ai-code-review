@@ -140,7 +140,7 @@
 
 | Feature | ai-review CLI | CodeRabbit | Greptile | Macroscope |
 |---------|:------------:|:----------:|:--------:|:----------:|
-| Multi-provider support | ✅ (8 providers) | ❌ (own) | ❌ (own, with LLM config for self-host) | 🟡 (auto-tune multi-model) |
+| Multi-provider support | ✅ (10 providers) | ❌ (own) | ❌ (own, with LLM config for self-host) | 🟡 (auto-tune multi-model) |
 | Configurable model per provider | ✅ | ❌ | 🟡 (self-host) | 🟡 (Check Run Agents) |
 | Auto-tune (best model per language) | ❌ | ❌ | ❌ | ✅ |
 
@@ -213,11 +213,11 @@
 
 ## What ai-review CLI Already Does Well
 
-- **Multi-provider flexibility** — 8 providers; competitors lock you into their own infra
+- **Multi-provider flexibility** — 10 providers; competitors lock you into their own infra
 - **CLI-first design** — no signup needed to run a review locally
 - **Triage system** — score-based skip for clean files (unique approach)
 - **i18n** — 10 review languages, no competitor offers this
 - **Multiple review scopes** — staged/unstaged/committed/uncommitted/all (most granular)
-- **Output modes** — plain, JSON, SARIF, agent event stream (SARIF is unique)
+- **Output modes** — plain, JSON, SARIF, agent event stream
 - **Open-source** — can be extended, forked, self-hosted freely
 - **Ink-based interactive TUI** — polished terminal UI with mouse support
