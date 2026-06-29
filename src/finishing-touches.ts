@@ -33,11 +33,10 @@ export async function runFinishingTouch(
 
     const match = text.match(/```(?:\w+)?\n([\s\S]*?)```/);
     if (!match) return { ok: false, message: 'No code block in model response.' };
-    if (action !== 'merge-hints' && content.includes('<<<<<<<')) {
-        await fs.writeFile(filePath, match[1].trimEnd() + '\n', 'utf-8');
-        return { ok: true, message: 'Wrote resolved file.' };
+    if (action === 'merge-hints' && !content.includes('<<<<<<<')) {
+        return { ok: false, message: 'No conflict markers in file.' };
     }
-    if (action === 'docstring' || action === 'simplify') {
+    if (action === 'docstring' || action === 'simplify' || action === 'merge-hints') {
         await fs.writeFile(filePath, match[1].trimEnd() + '\n', 'utf-8');
         return { ok: true, message: `Updated ${filePath}.` };
     }

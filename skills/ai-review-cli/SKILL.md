@@ -158,7 +158,23 @@ enabledTools:
   - gitleaks
 webSearch: false
 mcp: false
+reviewMemory: true
+autoApproveMaxFindings: 0
+styleGuideFiles: []
+customRules: []
 ```
+
+Additional commands:
+
+```bash
+ai-review feedback --down --file src/a.ts --title "finding title"
+ai-review fix [--dry-run] [--max 3]
+ai-review polish --action docstring --file src/a.ts
+ai-review metrics
+ai-review mcp   # MCP stdio server (list_findings, get_issue)
+```
+
+User-level defaults: `~/.ai-review.yaml` merges under repo `.ai-review.yaml`.
 
 Use `--config <path>` to load a specific config file:
 
