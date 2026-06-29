@@ -188,6 +188,11 @@ export const ReviewDashboard = ({
 
     const addLog = (msg: string) => setLogs((prev) => [...prev, msg]);
     const logError = (msg: string) => addLog(`Error: ${msg}`);
+    const showReviewResult = (content: string) => {
+        setReview(content);
+        setScanProgress('');
+        setViewMode('review_result');
+    };
     const showActionNotice = (message: string, kind: 'info' | 'success' | 'warning' | 'error' = 'info') => {
         setActionNotice(message);
         setActionNoticeKind(kind);
@@ -291,15 +296,13 @@ export const ReviewDashboard = ({
                 const changedFiles = await getChangedCodeFiles();
 
                 if (changedFiles.length === 0) {
-                    setReview('No uncommitted/staged code files found. Your working tree is clean.');
-                    setIsTyping(false);
+                    showReviewResult('No uncommitted/staged code files found. Your working tree is clean.');
                     return;
                 }
 
                 const isValid = await validateApiKey(config);
                 if (!isValid) {
-                    setReview('❌ Invalid API Key or Model. Please check your settings.');
-                    setIsTyping(false);
+                    showReviewResult('Invalid API key/account auth or model. Please check your settings.');
                     return;
                 }
 
@@ -311,16 +314,19 @@ export const ReviewDashboard = ({
                 }, changedFiles, scanAbortControllerRef.current.signal);
 
                 setScanDuration(result.durationSecs);
+                setScanProgress('');
 
                 if (result.issues.length > 0) {
                     scanTimerRef.current = setTimeout(
                         () => setViewMode('issues'),
                         800
                     );
+                } else {
+                    setViewMode('review_result');
                 }
             } catch (e) {
                 logError(`Scan failed: ${(e as Error).message}`);
-                setScanProgress('');
+                showReviewResult(`Scan failed: ${(e as Error).message}`);
             } finally {
                 setIsTyping(false);
             }
@@ -340,8 +346,7 @@ export const ReviewDashboard = ({
             try {
                 const isValid = await validateApiKey(config);
                 if (!isValid) {
-                    setReview('❌ Invalid API Key or Model. Please check your settings.');
-                    setIsTyping(false);
+                    showReviewResult('Invalid API key/account auth or model. Please check your settings.');
                     return;
                 }
 
@@ -353,16 +358,19 @@ export const ReviewDashboard = ({
                 }, undefined, scanAbortControllerRef.current.signal);
 
                 setScanDuration(result.durationSecs);
+                setScanProgress('');
 
                 if (result.issues.length > 0) {
                     scanTimerRef.current = setTimeout(
                         () => setViewMode('issues'),
                         800
                     );
+                } else {
+                    setViewMode('review_result');
                 }
             } catch (e) {
                 logError(`Scan failed: ${(e as Error).message}`);
-                setScanProgress('');
+                showReviewResult(`Scan failed: ${(e as Error).message}`);
             } finally {
                 setIsTyping(false);
             }
@@ -443,16 +451,29 @@ export const ReviewDashboard = ({
         // Esc or Left Arrow on dashboard → do nothing (they're on the top-level)
         // Esc or Left Arrow on sub-views are handled by their own components
         if (key.escape || key.leftArrow) {
+            if (isTyping) {
+                if (key.escape) {
+                    const now = Date.now();
+                    if (now - lastEscTimeRef.current < 500) {
+                        if (scanAbortControllerRef.current) {
+                            scanAbortControllerRef.current.abort();
+                            addLog('Scan manually aborted by user.');
+                            setScanProgress('');
+                            setIsTyping(false);
+                            setReview((prev) => prev + '\n\n**Scan aborted by user.**');
+                        }
+                        setViewMode('review_result');
+                        lastEscTimeRef.current = 0;
+                    } else {
+                        lastEscTimeRef.current = now;
+                    }
+                }
+                return;
+            }
+
             if (key.escape) {
                 const now = Date.now();
                 if (now - lastEscTimeRef.current < 500) {
-                    if (isTyping && scanAbortControllerRef.current) {
-                        scanAbortControllerRef.current.abort();
-                        addLog('Scan manually aborted by user.');
-                        setScanProgress('');
-                        setIsTyping(false);
-                        setReview((prev) => prev + '\n\n**Scan aborted by user.**');
-                    }
                     setViewMode('dashboard');
                     lastEscTimeRef.current = 0;
                     return;

@@ -7,20 +7,37 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateText } from 'ai';
 import type { AppConfig } from './types.js';
 import { DEFAULT_REVIEW_LANGUAGE, DEFAULT_UI_LANGUAGE } from './locales.js';
-import { getProviderDefinition, getProviderEnvKey, PROVIDERS } from './providers.js';
+import { getProviderDefinition, getProviderEnvKey, providerRequiresApiKey, PROVIDERS } from './providers.js';
+import { validateExternalProvider } from './provider-runtime.js';
 
 // ── Config Path ──
 const CONFIG_PATH = path.join(os.homedir(), '.ai-reviewer.json');
 
 function getDefaultConfig(): AppConfig {
-    const defaultProvider = 'nvidia';
+    let defaultProvider = 'opencode';
+    let apiKey: string | null = null;
+
+    for (const def of PROVIDERS) {
+        if (!def.requiresApiKey || !def.envKeys.length) continue;
+        for (const key of def.envKeys) {
+            const value = process.env[key];
+            if (value) {
+                defaultProvider = def.id;
+                apiKey = value;
+                break;
+            }
+        }
+        if (apiKey) break;
+    }
+
     const provider = getProviderDefinition(defaultProvider);
 
     return {
         provider: defaultProvider,
-        apiKey: getProviderEnvKey(defaultProvider) || null,
-        model: provider?.defaultModel || 'default',
+        apiKey: apiKey ?? (getProviderEnvKey(defaultProvider) || null),
+        model: process.env.AI_MODEL || provider?.defaultModel || 'default',
         keys: {},
+        authMode: 'subscription',
         reviewLanguage: DEFAULT_REVIEW_LANGUAGE,
         uiLanguage: DEFAULT_UI_LANGUAGE,
         reviewTone: 'strict',
@@ -30,14 +47,21 @@ function getDefaultConfig(): AppConfig {
 
 export function normalizeConfig(config?: Partial<AppConfig> | null): AppConfig {
     const fallback = getDefaultConfig();
-    const provider = config?.provider || fallback.provider;
+    const requestedProvider = config?.provider || fallback.provider;
+    const provider = getProviderDefinition(requestedProvider) ? requestedProvider : fallback.provider;
+    const useSavedProviderValues = provider === requestedProvider;
     const providerDefinition = getProviderDefinition(provider);
+    const fallbackApiKey = provider === fallback.provider ? fallback.apiKey : null;
+    const apiKey = providerRequiresApiKey(provider)
+        ? (useSavedProviderValues ? config?.apiKey : undefined) ?? config?.keys?.[provider] ?? getProviderEnvKey(provider) ?? fallbackApiKey
+        : null;
 
     return {
         provider,
-        apiKey: config?.apiKey ?? config?.keys?.[provider] ?? getProviderEnvKey(provider) ?? fallback.apiKey,
-        model: config?.model || providerDefinition?.defaultModel || fallback.model,
+        apiKey,
+        model: (useSavedProviderValues ? config?.model : undefined) || providerDefinition?.defaultModel || fallback.model,
         keys: config?.keys || {},
+        authMode: config?.authMode || fallback.authMode,
         reviewLanguage: config?.reviewLanguage || fallback.reviewLanguage,
         uiLanguage: config?.uiLanguage || fallback.uiLanguage,
         reviewTone: config?.reviewTone || fallback.reviewTone,
@@ -48,11 +72,7 @@ export function normalizeConfig(config?: Partial<AppConfig> | null): AppConfig {
 // ── Load / Save Config ──
 
 export async function loadConfig(): Promise<AppConfig> {
-    let conf: AppConfig = normalizeConfig({
-        provider: 'nvidia',
-        apiKey: process.env.AI_CODE_REVIEW_API_KEY || getProviderEnvKey('nvidia') || null,
-        model: process.env.AI_MODEL || getProviderDefinition('nvidia')?.defaultModel || 'default',
-    });
+    let conf: AppConfig = normalizeConfig(getDefaultConfig());
 
     try {
         if (await fs.pathExists(CONFIG_PATH)) {
@@ -63,13 +83,23 @@ export async function loadConfig(): Promise<AppConfig> {
         console.debug('Failed to load local config', e);
     }
 
-    if (!conf.apiKey && process.env.OPENAI_API_KEY) {
-        conf = normalizeConfig({
-            ...conf,
-            provider: 'openai',
-            apiKey: process.env.OPENAI_API_KEY,
-            model: process.env.AI_MODEL || getProviderDefinition('openai')?.defaultModel,
-        });
+    if (!conf.apiKey) {
+        for (const def of PROVIDERS) {
+            if (!def.requiresApiKey || !def.envKeys.length) continue;
+            for (const key of def.envKeys) {
+                const value = process.env[key];
+                if (value) {
+                    conf = normalizeConfig({
+                        ...conf,
+                        provider: def.id,
+                        apiKey: value,
+                        model: process.env.AI_MODEL || def.defaultModel,
+                    });
+                    break;
+                }
+            }
+            if (conf.apiKey) break;
+        }
     }
 
     return conf;
@@ -89,13 +119,27 @@ export async function fetchModels(
     try {
         const definition = getProviderDefinition(provider);
         if (!definition?.modelListURL) {
-            throw new Error(`Provider "${provider}" does not support remote model discovery.`);
+            if (definition?.staticModels?.length) {
+                return definition.staticModels;
+            }
+            return [{ label: definition?.defaultModel || 'default', value: definition?.defaultModel || 'default' }];
         }
 
         const fetchAndParse = async (url: string, headers: Record<string, string>) => {
-            const res = await fetch(url, { headers, signal });
-            if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-            return await res.json();
+            const timeoutController = new AbortController();
+            const timeout = setTimeout(() => timeoutController.abort(), 8_000);
+            const abortHandler = () => timeoutController.abort();
+
+            signal?.addEventListener('abort', abortHandler, { once: true });
+
+            try {
+                const res = await fetch(url, { headers, signal: timeoutController.signal });
+                if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                return await res.json();
+            } finally {
+                clearTimeout(timeout);
+                signal?.removeEventListener('abort', abortHandler);
+            }
         };
 
         const data = await fetchAndParse(
@@ -111,12 +155,21 @@ export async function fetchModels(
             .map((model: unknown) => definition.modelMapper(model as Record<string, unknown>))
             .filter(Boolean) as { label: string; value: string }[];
 
+        if (models.length === 0 && definition.staticModels?.length) {
+            return definition.staticModels;
+        }
+
         if (provider === 'anthropic') {
             return models.sort((a, b) => a.label.localeCompare(b.label));
         }
 
         return models;
     } catch (e) {
+        const definition = getProviderDefinition(provider);
+        if (definition?.staticModels?.length) {
+            return definition.staticModels;
+        }
+
         console.error('Failed to fetch models', e);
         throw e;
     }
@@ -126,6 +179,11 @@ export async function fetchModels(
 
 export function getModel(config: AppConfig) {
     const normalized = normalizeConfig(config);
+
+    const definition = getProviderDefinition(normalized.provider);
+    if (definition?.runtime && definition.runtime !== 'ai-sdk') {
+        throw new Error(`${definition.label} uses ${definition.runtime} and is not available as a Vercel AI SDK model.`);
+    }
 
     if (!normalized.apiKey) {
         throw new Error('API key is required. Set an API key via environment variable or configuration.');
@@ -170,6 +228,11 @@ export function getModel(config: AppConfig) {
  */
 export async function validateApiKey(config: AppConfig): Promise<boolean> {
     try {
+        const definition = getProviderDefinition(config.provider);
+        if (definition?.runtime && definition.runtime !== 'ai-sdk') {
+            return await validateExternalProvider(config);
+        }
+
         const model = getModel(config);
         await generateText({
             model,

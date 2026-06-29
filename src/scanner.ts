@@ -3,11 +3,13 @@ import { createHash } from 'crypto';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { getModel } from './config.js';
+import { isExternalProvider, runExternalStructuredReview } from './provider-runtime.js';
 import { git, getCodeFiles } from './git.js';
 import { analyzeFileStatic } from './static-analysis.js';
 import { extractMeaningfulCode } from './ast.js';
 import { ensureProjectIndex, getProjectContext } from './project-index.js';
 import { getScanSystemPrompt, SCAN_PROMPT_VERSION, TRIAGE_SYSTEM_PROMPT } from './prompts.js';
+import { formatReviewContextForPrompt, type ReviewContextBundle } from './review-context.js';
 import type { ScanIssue, AppConfig, ProjectIndex } from './types.js';
 
 const IssueSchema = z.object({
@@ -125,9 +127,8 @@ export interface ScanCallbacks {
 
 // ── Maximum number of concurrent LLM calls by provider ──
 const PROVIDER_CONCURRENCY: Record<string, number> = {
-    groq: 15,
+    opencode: 5,
     cerebras: 15,
-    nvidia: 10,
     openai: 8,
     anthropic: 5,
     google: 10,
@@ -202,6 +203,7 @@ interface CachedScanEntry {
 
 interface ScanRuntime {
     config: AppConfig;
+    reviewContext?: ReviewContextBundle;
     callbacks: ScanCallbacks;
     filesToScan?: string[];
     abortSignal?: AbortSignal;
@@ -308,6 +310,10 @@ function handleTaskFailure(runtime: ScanRuntime, file: string, error: unknown): 
 }
 
 async function triageFile(runtime: ScanRuntime, file: string, contentToSend: string, abortSignal?: AbortSignal): Promise<number | null> {
+    if (isExternalProvider(runtime.config)) {
+        return null;
+    }
+
     try {
         const { object: triage } = await generateObject({
             model: getModel(runtime.config),
@@ -324,12 +330,29 @@ async function triageFile(runtime: ScanRuntime, file: string, contentToSend: str
 }
 
 async function runDeepScan(runtime: ScanRuntime, file: string, contentToSend: string, projectContext: string, abortSignal: AbortSignal): Promise<ScanIssue[]> {
+    const system = getScanSystemPrompt(runtime.config);
+    const reviewModeInstruction = contentToSend.startsWith('diff --git ')
+        ? 'Review mode: git diff. Focus findings on added or modified lines. Only mention unchanged context when it directly proves a changed-line bug.'
+        : 'Review mode: full file. Review the file contents for concrete issues.';
+    const teamContext = runtime.reviewContext
+        ? formatReviewContextForPrompt(file, runtime.reviewContext)
+        : '';
+    const prompt = `File: ${file}\n${reviewModeInstruction}\n\nProject context:\n${projectContext || 'No additional project context available.'}${teamContext ? `\n\nTeam and path context:\n${teamContext}` : ''}\n\nContents/Diff:\n\`\`\`\n${contentToSend}\n\`\`\``;
+
+    if (isExternalProvider(runtime.config)) {
+        const parsed = await withRetry(async () => {
+            return await runExternalStructuredReview(runtime.config, system, prompt, abortSignal);
+        }, 3, 1000, abortSignal);
+
+        return parseScanIssues(parsed, file);
+    }
+
     const { object: parsed } = await withRetry(async () => {
         return await generateObject({
             model: getModel(runtime.config),
             schema: IssueSchema,
-            system: getScanSystemPrompt(runtime.config),
-            prompt: `File: ${file}\nContext: ${contentToSend}\n\nProject context:\n${projectContext || 'No additional project context available.'}\n\nContents/Diff:\n\`\`\`\n${contentToSend}\n\`\`\``,
+            system,
+            prompt,
             abortSignal,
         });
     }, 3, 1000, abortSignal);
@@ -366,7 +389,10 @@ function createFileTask(runtime: ScanRuntime, file: string, content: string): ()
     return async () => {
         if (runtime.abortSignal?.aborted) return [];
 
-        const { signal, cleanup } = createTaskAbortSignal(runtime.abortSignal, 20_000);
+        const { signal, cleanup } = createTaskAbortSignal(
+            runtime.abortSignal,
+            isExternalProvider(runtime.config) ? 120_000 : 20_000
+        );
 
         try {
             const context = buildFileTaskContext(runtime, file, content);
@@ -469,6 +495,7 @@ async function saveScanCache(cacheFile: string, cache: Record<string, CachedScan
 
 function createScanRuntime(params: {
     config: AppConfig;
+    reviewContext?: ReviewContextBundle;
     callbacks: ScanCallbacks;
     filesToScan?: string[];
     abortSignal?: AbortSignal;
@@ -480,6 +507,7 @@ function createScanRuntime(params: {
 }): ScanRuntime {
     return {
         config: params.config,
+        reviewContext: params.reviewContext,
         callbacks: params.callbacks,
         filesToScan: params.filesToScan,
         abortSignal: params.abortSignal,
@@ -498,7 +526,8 @@ export async function scanCodebase(
     config: AppConfig,
     callbacks: ScanCallbacks,
     filesToScan?: string[],
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    reviewContext?: ReviewContextBundle,
 ): Promise<ScanResult> {
     const scanStartTime = Date.now();
 
@@ -548,6 +577,7 @@ export async function scanCodebase(
 
     const runtime = createScanRuntime({
         config,
+        reviewContext,
         callbacks,
         filesToScan,
         abortSignal,

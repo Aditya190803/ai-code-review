@@ -100,6 +100,58 @@ export async function getChangedCodeFiles(): Promise<string[]> {
     }
 }
 
+async function filterReviewableFiles(files: string[]): Promise<string[]> {
+    const ignorePatterns = await getIgnorePatterns();
+    return [...new Set(files)]
+        .filter((f) => CODE_EXTENSIONS.some((ext) => f.endsWith(ext)))
+        .filter((f) => !ignorePatterns.some((pattern) => pattern.test(f)));
+}
+
+async function getDiffNameOnly(args: string[]): Promise<string[]> {
+    try {
+        const output = await git.raw(['diff', '--name-only', ...args]);
+        return output.split('\n').map((line) => line.trim()).filter(Boolean);
+    } catch (e) {
+        console.debug('Failed to get diff names:', e);
+        return [];
+    }
+}
+
+export async function getStagedCodeFiles(): Promise<string[]> {
+    return filterReviewableFiles(await getDiffNameOnly(['--staged']));
+}
+
+export async function getUnstagedCodeFiles(): Promise<string[]> {
+    const unstaged = await getDiffNameOnly([]);
+    let untracked: string[] = [];
+    try {
+        const status = await git.status();
+        untracked = status.not_added || [];
+    } catch (e) {
+        console.debug('Failed to get untracked files:', e);
+    }
+
+    return filterReviewableFiles([...unstaged, ...untracked]);
+}
+
+export async function getCommittedCodeFiles(base = 'HEAD~1'): Promise<string[]> {
+    try {
+        const output = await git.raw(['diff', '--name-only', `${base}..HEAD`]);
+        return filterReviewableFiles(output.split('\n').map((line) => line.trim()).filter(Boolean));
+    } catch (e) {
+        console.debug('Failed to get committed code files:', e);
+        return [];
+    }
+}
+
+export async function getBaseCodeFiles(base: string): Promise<string[]> {
+    return filterReviewableFiles(await getDiffNameOnly([`${base}...HEAD`]));
+}
+
+export async function getBaseCommitCodeFiles(baseCommit: string): Promise<string[]> {
+    return filterReviewableFiles(await getDiffNameOnly([`${baseCommit}..HEAD`]));
+}
+
 // ── Get diff (staged or unstaged) ──
 export async function getDiff(): Promise<string> {
     let diff = '';

@@ -324,7 +324,7 @@ export const IssueDetailView = ({
             </Box>
 
             {/* Footer Controls */}
-            <Box marginTop="auto" paddingX={1}>
+            <Box marginTop={1} paddingX={1}>
                 <Text color={copied ? 'greenBright' : 'cyan'} bold={copied} wrap="truncate-end">
                     {footerText}
                 </Text>
