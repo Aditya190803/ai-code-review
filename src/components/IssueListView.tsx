@@ -154,8 +154,8 @@ export const IssueListView = ({
         onStateChange((prev) => ({
             ...prev,
             selectedIndex: direction === 'up'
-                ? Math.max(0, prev.selectedIndex - 1)
-                : Math.min(lastIndex, prev.selectedIndex + 1),
+                ? (prev.selectedIndex <= 0 ? lastIndex : prev.selectedIndex - 1)
+                : (prev.selectedIndex >= lastIndex ? 0 : prev.selectedIndex + 1),
         }));
     }, listItems.length > 0);
 
@@ -217,11 +217,18 @@ export const IssueListView = ({
 
         if (key.upArrow) {
             if (!allowArrow('up')) return;
-            onStateChange((prev) => ({ ...prev, selectedIndex: Math.max(0, prev.selectedIndex - 1) }));
+            const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
+            onStateChange((prev) => ({
+                ...prev,
+                selectedIndex: prev.selectedIndex <= 0 ? lastIndex : prev.selectedIndex - 1,
+            }));
         } else if (key.downArrow) {
             if (!allowArrow('down')) return;
             const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
-            onStateChange((prev) => ({ ...prev, selectedIndex: Math.min(lastIndex, prev.selectedIndex + 1) }));
+            onStateChange((prev) => ({
+                ...prev,
+                selectedIndex: prev.selectedIndex >= lastIndex ? 0 : prev.selectedIndex + 1,
+            }));
         } else if (key.pageUp) {
             onStateChange((prev) => ({ ...prev, selectedIndex: Math.max(0, prev.selectedIndex - limit) }));
         } else if (key.pageDown) {

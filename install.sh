@@ -129,4 +129,32 @@ if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
 fi
 
 echo ""
+echo "╔══════════════════════════════════════════════════════════╗"
+echo "║  Agent Skill (ai-review-cli)                             ║"
+echo "╚══════════════════════════════════════════════════════════╝"
+echo ""
+echo "This project ships an agent skill (ai-review-cli) that teaches AI agents"
+echo "how to use the 'ai-review' CLI — review scopes, provider setup, CI output"
+echo "modes, agent mode, and troubleshooting."
+echo ""
+echo "The skill is also listed on skills.sh. Anyone can install it with:"
+echo "  npx skills add Aditya190803/ai-code-review --skill ai-review-cli"
+echo ""
+read -r -p "Install the skill for your local OpenCode agent? [y/N] " install_skill
+if [[ "$install_skill" =~ ^[Yy]$ ]]; then
+    SKILL_SOURCE="$INSTALL_DIR/skills/ai-review-cli/SKILL.md"
+    SKILL_DEST_DIR="$HOME/.config/opencode/skills/ai-review-cli"
+    SKILL_DEST="$SKILL_DEST_DIR/SKILL.md"
+    if [ -f "$SKILL_SOURCE" ]; then
+        mkdir -m 755 -p "$SKILL_DEST_DIR"
+        cp "$SKILL_SOURCE" "$SKILL_DEST"
+        chmod 644 "$SKILL_DEST"
+        echo "✅ Installed ai-review-cli skill to $SKILL_DEST"
+        echo "   Restart OpenCode for the skill to be discovered."
+    else
+        echo "⚠️ Skill file not found at $SKILL_SOURCE — skipping."
+    fi
+fi
+
+echo ""
 echo "✨ Installation complete! You can now run 'ai-review' in any Git repository."
