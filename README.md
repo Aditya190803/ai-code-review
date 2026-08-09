@@ -138,6 +138,15 @@ The CLI defaults to OpenCode with the `big-pickle` model. Set `OPENCODE_API_KEY`
 ai-review review --interactive
 ```
 
+Copy `.env.example` to `.env` and fill in your key. `.env` is gitignored — never commit it.
+
+`OPENCODE_BASE_URL` overrides the default endpoint (`https://opencode.ai/zen/v1`) if you route through a proxy or gateway.
+
+`big-pickle` is a reasoning model, and its reasoning tokens count against the same
+output-token budget as the review text. The review, scan, and summary calls
+request a 16k output budget so a long review is not truncated mid-finding; the
+provider ceiling is 32k.
+
 Codex is optional and uses your existing official Codex CLI login:
 
 ```bash

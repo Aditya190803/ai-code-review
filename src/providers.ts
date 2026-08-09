@@ -10,7 +10,15 @@ export interface ProviderDefinition {
     subscriptionNote?: string;
     staticModels?: { label: string; value: string }[];
     baseURL?: string;
+    /** Environment variables that override `baseURL`, checked in order. */
+    baseUrlEnvKeys?: string[];
     modelListURL?: string;
+    /**
+     * Upper bound on output tokens for a full review or scan response.
+     * For reasoning models this budget is shared with reasoning tokens, so it
+     * must stay well above the length of the visible answer alone.
+     */
+    maxOutputTokens?: number;
     authHeaders?: (apiKey: string) => Record<string, string>;
     modelResponsePath: 'data' | 'models';
     modelMapper: (model: Record<string, any>) => { label: string; value: string } | null;
@@ -33,7 +41,12 @@ export const PROVIDERS: ProviderDefinition[] = [
         subscriptionNote: 'Use your OpenCode Zen account key. OpenCode exposes subscription/gateway access through its OpenAI-compatible Zen API.',
         staticModels: [{ label: 'big-pickle', value: 'big-pickle' }],
         baseURL: 'https://opencode.ai/zen/v1',
+        baseUrlEnvKeys: ['OPENCODE_BASE_URL'],
         modelListURL: 'https://opencode.ai/zen/v1/models',
+        // big-pickle is a reasoning model: reasoning tokens are billed against
+        // max_tokens, so a review-sized budget must leave room for both the
+        // reasoning trace and the full review body. Hard ceiling is 32k output.
+        maxOutputTokens: 16_000,
         authHeaders: bearerAuth,
         modelResponsePath: 'data',
         modelMapper: (model) => ({ label: model.id, value: model.id }),
@@ -129,10 +142,11 @@ export const PROVIDERS: ProviderDefinition[] = [
         id: 'openrouter',
         label: 'OpenRouter',
         envKeys: ['OPENROUTER_API_KEY'],
-        defaultModel: 'openai/gpt-4.1-mini',
+        defaultModel: 'openai/gpt-5-mini',
         runtime: 'ai-sdk',
         requiresApiKey: true,
         baseURL: 'https://openrouter.ai/api/v1',
+        baseUrlEnvKeys: ['OPENROUTER_BASE_URL'],
         modelListURL: 'https://openrouter.ai/api/v1/models',
         authHeaders: () => ({}),
         modelResponsePath: 'data',
@@ -142,10 +156,14 @@ export const PROVIDERS: ProviderDefinition[] = [
         id: 'cerebras',
         label: 'Cerebras',
         envKeys: ['CEREBRAS_API_KEY'],
-        defaultModel: 'llama-4-scout-17b-16e-instruct',
+        // llama-4-scout-17b-16e-instruct was deprecated on 2026-06-17 and no
+        // longer resolves. The live model list is fetched at runtime; this is
+        // only the fallback when that request fails.
+        defaultModel: 'llama-3.3-70b',
         runtime: 'ai-sdk',
         requiresApiKey: true,
         baseURL: 'https://api.cerebras.ai/v1',
+        baseUrlEnvKeys: ['CEREBRAS_BASE_URL'],
         modelListURL: 'https://api.cerebras.ai/v1/models',
         authHeaders: bearerAuth,
         modelResponsePath: 'data',
@@ -177,3 +195,61 @@ export function getProviderEnvKey(providerId: string): string {
 export function providerRequiresApiKey(providerId: string): boolean {
     return getProviderDefinition(providerId)?.requiresApiKey !== false;
 }
+
+/**
+ * Resolve a provider base URL, preferring an explicit override, then the
+ * provider's environment override (e.g. OPENCODE_BASE_URL), then the default.
+ */
+export function getProviderBaseURL(providerId: string, override?: string): string | undefined {
+    if (override) return override;
+
+    const provider = getProviderDefinition(providerId);
+    if (!provider) return undefined;
+
+    for (const envKey of provider.baseUrlEnvKeys || []) {
+        const value = process.env[envKey];
+        if (value) return value;
+    }
+
+    return provider.baseURL;
+}
+
+/**
+ * Resolve the model-discovery URL.
+ *
+ * When a base URL override is in play (e.g. OPENCODE_BASE_URL points at a
+ * proxy), model discovery has to follow it too — otherwise the client talks to
+ * the proxy for completions but to the public host for the model list.
+ */
+export function getProviderModelListURL(providerId: string, override?: string): string | undefined {
+    const provider = getProviderDefinition(providerId);
+    if (!provider) return undefined;
+
+    const baseURL = getProviderBaseURL(providerId, override);
+    if (baseURL && baseURL !== provider.baseURL) {
+        return `${baseURL.replace(/\/+$/, '')}/models`;
+    }
+
+    return provider.modelListURL;
+}
+
+/**
+ * Output-token budget for a full review or scan response.
+ *
+ * Reasoning models bill reasoning tokens against the same budget as the visible
+ * answer, so an undersized value silently truncates a review mid-finding rather
+ * than failing loudly. Default generously.
+ */
+export function getProviderMaxOutputTokens(providerId: string): number {
+    return getProviderDefinition(providerId)?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
+/** Full review / scan output. Generous on purpose — see getProviderMaxOutputTokens. */
+export const DEFAULT_MAX_OUTPUT_TOKENS = 16_000;
+
+/**
+ * Short structured replies (triage score, key-validation ping). Still far above
+ * the visible answer size because reasoning tokens consume this budget first —
+ * a value near the answer length returns an empty or truncated response.
+ */
+export const SHORT_REPLY_MAX_OUTPUT_TOKENS = 4_000;

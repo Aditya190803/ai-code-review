@@ -7,7 +7,15 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateText } from 'ai';
 import type { AppConfig } from './types.js';
 import { DEFAULT_REVIEW_LANGUAGE, DEFAULT_UI_LANGUAGE } from './locales.js';
-import { getProviderDefinition, getProviderEnvKey, providerRequiresApiKey, PROVIDERS } from './providers.js';
+import {
+    getProviderBaseURL,
+    getProviderDefinition,
+    getProviderEnvKey,
+    getProviderModelListURL,
+    providerRequiresApiKey,
+    PROVIDERS,
+    SHORT_REPLY_MAX_OUTPUT_TOKENS,
+} from './providers.js';
 import { validateExternalProvider } from './provider-runtime.js';
 
 // ── Config Path ──
@@ -118,7 +126,8 @@ export async function fetchModels(
 ): Promise<{ label: string; value: string }[]> {
     try {
         const definition = getProviderDefinition(provider);
-        if (!definition?.modelListURL) {
+        const modelListURL = getProviderModelListURL(provider);
+        if (!definition || !modelListURL) {
             if (definition?.staticModels?.length) {
                 return definition.staticModels;
             }
@@ -143,7 +152,7 @@ export async function fetchModels(
         };
 
         const data = await fetchAndParse(
-            definition.modelListURL,
+            modelListURL,
             definition.authHeaders?.(apiKey) || {}
         );
         const response = data as Record<string, unknown>;
@@ -200,16 +209,17 @@ export function getModel(config: AppConfig) {
     if (normalized.provider === 'openai') {
         const openai = createOpenAICompatible({
             name: 'openai',
-            baseURL: normalized.providerOptions?.openai?.baseURL || getProviderDefinition('openai')?.baseURL || 'https://api.openai.com/v1',
+            baseURL: getProviderBaseURL('openai', normalized.providerOptions?.openai?.baseURL) || 'https://api.openai.com/v1',
             headers: { Authorization: `Bearer ${normalized.apiKey}` },
         });
         return openai(normalized.model || getProviderDefinition('openai')?.defaultModel || 'gpt-5-mini');
     }
 
     const providerDefinition = getProviderDefinition(normalized.provider);
-    const baseURL =
-        normalized.providerOptions?.[normalized.provider]?.baseURL ||
-        providerDefinition?.baseURL;
+    const baseURL = getProviderBaseURL(
+        normalized.provider,
+        normalized.providerOptions?.[normalized.provider]?.baseURL,
+    );
 
     if (!baseURL) {
         throw new Error(`Provider "${normalized.provider}" does not have a base URL configured.`);
@@ -238,6 +248,9 @@ export async function validateApiKey(config: AppConfig): Promise<boolean> {
             model,
             system: 'Reply OK',
             prompt: 'ping',
+            // Reasoning models spend this budget on reasoning before emitting
+            // any visible text; too small a value makes a valid key look dead.
+            maxOutputTokens: SHORT_REPLY_MAX_OUTPUT_TOKENS,
         });
         return true;
     } catch (e) {

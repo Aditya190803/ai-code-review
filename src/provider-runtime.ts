@@ -18,6 +18,7 @@ const ISSUE_JSON_SCHEMA = {
                 properties: {
                     category: { enum: ['bug', 'runtime', 'security', 'performance', 'style', 'antipattern', 'crossfile', 'test'] },
                     severity: { enum: ['critical', 'warning', 'info'] },
+                    confidence: { enum: ['high', 'medium'] },
                     title: { type: 'string' },
                     line: { type: 'number' },
                     lineEnd: { type: 'number' },
@@ -26,7 +27,7 @@ const ISSUE_JSON_SCHEMA = {
                     suggestedFix: { type: 'string' },
                     aiPrompt: { type: 'string' },
                 },
-                required: ['category', 'severity', 'title', 'line', 'lineEnd', 'codeContext', 'description', 'suggestedFix', 'aiPrompt'],
+                required: ['category', 'severity', 'confidence', 'title', 'line', 'lineEnd', 'codeContext', 'description', 'suggestedFix', 'aiPrompt'],
             },
         },
     },

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { fetchModels, normalizeConfig } from './config.js';
+import { PROVIDERS } from './providers.js';
 
 describe('normalizeConfig', () => {
     test('defaults to OpenCode Big Pickle', () => {
@@ -28,7 +29,18 @@ describe('normalizeConfig', () => {
             apiKey: 'test-key',
         });
 
-        expect(config.model).toBe('llama-4-scout-17b-16e-instruct');
+        expect(config.model).toBe('llama-3.3-70b');
+    });
+
+    test('does not offer the deprecated llama-4-scout model anywhere', () => {
+        const deadModel = 'llama-4-scout-17b-16e-instruct';
+
+        for (const provider of PROVIDERS) {
+            expect(provider.defaultModel).not.toBe(deadModel);
+            for (const model of provider.staticModels || []) {
+                expect(model.value).not.toBe(deadModel);
+            }
+        }
     });
 
     test('falls back to OpenCode when a saved provider is no longer supported', () => {

@@ -128,6 +128,7 @@ export function renderSarifReview(issues: ScanIssue[], durationSecs: number, fil
                     properties: {
                         category: issue.category,
                         severity: issue.severity,
+                        confidence: issue.confidence,
                         suggestedFix: issue.suggestedFix,
                         aiPrompt: issue.aiPrompt,
                         codeContext: issue.codeContext,

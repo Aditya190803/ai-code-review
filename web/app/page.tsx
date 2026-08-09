@@ -43,7 +43,7 @@ const API_KEY_PROVIDERS = [
   { name: "Google Gemini", note: "gemini-2.5-flash" },
   { name: "OpenAI", note: "gpt-5-mini" },
   { name: "OpenRouter", note: "Any model" },
-  { name: "Cerebras", note: "llama-4-scout" },
+  { name: "Cerebras", note: "llama-3.3-70b" },
 ];
 
 const SUBSCRIPTION_PROVIDERS = [
