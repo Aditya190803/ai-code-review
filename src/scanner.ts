@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { getModel } from './config.js';
+import { getProviderMaxOutputTokens, SHORT_REPLY_MAX_OUTPUT_TOKENS } from './providers.js';
 import { isExternalProvider, runExternalStructuredReview } from './provider-runtime.js';
 import { git, getCodeFiles } from './git.js';
 import { analyzeFileStatic } from './static-analysis.js';
@@ -16,6 +17,7 @@ const IssueSchema = z.object({
     issues: z.array(z.object({
         category: z.enum(['bug', 'runtime', 'security', 'performance', 'style', 'antipattern', 'crossfile', 'test']),
         severity: z.enum(['critical', 'warning', 'info']),
+        confidence: z.enum(['high', 'medium']),
         title: z.string(),
         line: z.number(),
         lineEnd: z.number(),
@@ -106,6 +108,7 @@ export function parseScanIssues(parsed: Record<string, unknown>, fileName: strin
     return parsed.issues.map((item: Record<string, unknown>) => ({
         category: typeof item.category === 'string' ? item.category : 'bug',
         severity: typeof item.severity === 'string' ? item.severity : 'info',
+        confidence: typeof item.confidence === 'string' ? item.confidence : 'medium',
         title: typeof item.title === 'string' ? item.title : 'Untitled issue',
         line: typeof item.line === 'number' ? item.line : 0,
         lineEnd: typeof item.lineEnd === 'number' ? item.lineEnd : (typeof item.line === 'number' ? item.line : 0),
@@ -124,6 +127,17 @@ export interface ScanCallbacks {
     onIssuesUpdate: (issues: ScanIssue[]) => void;
     onReviewUpdate: (text: string) => void;
 }
+
+/**
+ * Per-file budget covering the triage call plus the deep scan.
+ *
+ * This was 20s, which predates reasoning models. A reasoning model spends real
+ * time on the reasoning trace before emitting any output, so a 20s ceiling
+ * aborted essentially every file and surfaced as "AI scan timeout" with only
+ * static-analysis results left behind.
+ */
+const API_TASK_TIMEOUT_MS = 180_000;
+const EXTERNAL_TASK_TIMEOUT_MS = 180_000;
 
 // ── Maximum number of concurrent LLM calls by provider ──
 const PROVIDER_CONCURRENCY: Record<string, number> = {
@@ -318,8 +332,11 @@ async function triageFile(runtime: ScanRuntime, file: string, contentToSend: str
         const { object: triage } = await generateObject({
             model: getModel(runtime.config),
             schema: z.object({ score: z.number().min(1).max(10) }),
-            system: TRIAGE_SYSTEM_PROMPT,
+            instructions: TRIAGE_SYSTEM_PROMPT,
             prompt: `File: ${file}\n\n${contentToSend}`,
+            // The visible answer is a few tokens, but a reasoning model burns
+            // this budget on reasoning first and returns nothing if it runs out.
+            maxOutputTokens: SHORT_REPLY_MAX_OUTPUT_TOKENS,
             abortSignal,
         });
 
@@ -351,8 +368,12 @@ async function runDeepScan(runtime: ScanRuntime, file: string, contentToSend: st
         return await generateObject({
             model: getModel(runtime.config),
             schema: IssueSchema,
-            system,
+            instructions: system,
             prompt,
+            // A full scan response is long, and on a reasoning model the
+            // reasoning trace is charged against the same budget. Undersizing
+            // this truncates the JSON mid-finding instead of failing loudly.
+            maxOutputTokens: getProviderMaxOutputTokens(runtime.config.provider),
             abortSignal,
         });
     }, 3, 1000, abortSignal);
@@ -391,7 +412,7 @@ function createFileTask(runtime: ScanRuntime, file: string, content: string): ()
 
         const { signal, cleanup } = createTaskAbortSignal(
             runtime.abortSignal,
-            isExternalProvider(runtime.config) ? 120_000 : 20_000
+            isExternalProvider(runtime.config) ? EXTERNAL_TASK_TIMEOUT_MS : API_TASK_TIMEOUT_MS
         );
 
         try {

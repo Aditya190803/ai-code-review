@@ -3,6 +3,11 @@
 export interface ScanIssue {
     category: string;
     severity: string;
+    /**
+     * Model-reported confidence that the finding is real. Optional so that
+     * cached entries written before the 2026-08-09 prompt version still parse.
+     */
+    confidence?: string;
     title: string;
     line: number;
     lineEnd: number;

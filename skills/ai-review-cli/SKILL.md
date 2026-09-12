@@ -71,6 +71,7 @@ Supported providers include:
 - `cerebras`, using `CEREBRAS_API_KEY`
 
 Use `AI_MODEL=<model>` to override the selected model for a command when appropriate.
+Use `OPENCODE_BASE_URL=<url>` to point the default provider at a proxy or gateway.
 
 ## Review Scopes
 
