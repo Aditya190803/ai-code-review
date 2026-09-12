@@ -332,7 +332,7 @@ async function triageFile(runtime: ScanRuntime, file: string, contentToSend: str
         const { object: triage } = await generateObject({
             model: getModel(runtime.config),
             schema: z.object({ score: z.number().min(1).max(10) }),
-            system: TRIAGE_SYSTEM_PROMPT,
+            instructions: TRIAGE_SYSTEM_PROMPT,
             prompt: `File: ${file}\n\n${contentToSend}`,
             // The visible answer is a few tokens, but a reasoning model burns
             // this budget on reasoning first and returns nothing if it runs out.
@@ -368,7 +368,7 @@ async function runDeepScan(runtime: ScanRuntime, file: string, contentToSend: st
         return await generateObject({
             model: getModel(runtime.config),
             schema: IssueSchema,
-            system,
+            instructions: system,
             prompt,
             // A full scan response is long, and on a reasoning model the
             // reasoning trace is charged against the same budget. Undersizing

@@ -3,7 +3,7 @@ import path from 'node:path';
 import * as fs from 'fs-extra';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createAnthropic } from '@ai-sdk/anthropic';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createGoogle } from '@ai-sdk/google';
 import { generateText } from 'ai';
 import type { AppConfig } from './types.js';
 import { DEFAULT_REVIEW_LANGUAGE, DEFAULT_UI_LANGUAGE } from './locales.js';
@@ -200,11 +200,11 @@ export function getModel(config: AppConfig) {
 
     if (normalized.provider === 'anthropic') {
         const anthropic = createAnthropic({ apiKey: normalized.apiKey });
-        return anthropic(normalized.model || getProviderDefinition('anthropic')?.defaultModel || 'claude-sonnet-4-5');
+        return anthropic(normalized.model || getProviderDefinition('anthropic')?.defaultModel || 'claude-sonnet-5');
     }
     if (normalized.provider === 'google') {
-        const google = createGoogleGenerativeAI({ apiKey: normalized.apiKey });
-        return google(normalized.model || getProviderDefinition('google')?.defaultModel || 'gemini-2.5-flash');
+        const google = createGoogle({ apiKey: normalized.apiKey });
+        return google(normalized.model || getProviderDefinition('google')?.defaultModel || 'gemini-3.8-flash');
     }
     if (normalized.provider === 'openai') {
         const openai = createOpenAICompatible({
@@ -212,7 +212,7 @@ export function getModel(config: AppConfig) {
             baseURL: getProviderBaseURL('openai', normalized.providerOptions?.openai?.baseURL) || 'https://api.openai.com/v1',
             headers: { Authorization: `Bearer ${normalized.apiKey}` },
         });
-        return openai(normalized.model || getProviderDefinition('openai')?.defaultModel || 'gpt-5-mini');
+        return openai(normalized.model || getProviderDefinition('openai')?.defaultModel || 'gpt-6-astra');
     }
 
     const providerDefinition = getProviderDefinition(normalized.provider);
@@ -246,7 +246,7 @@ export async function validateApiKey(config: AppConfig): Promise<boolean> {
         const model = getModel(config);
         await generateText({
             model,
-            system: 'Reply OK',
+            instructions: 'Reply OK',
             prompt: 'ping',
             // Reasoning models spend this budget on reasoning before emitting
             // any visible text; too small a value makes a valid key look dead.

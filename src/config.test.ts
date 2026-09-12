@@ -29,7 +29,15 @@ describe('normalizeConfig', () => {
             apiKey: 'test-key',
         });
 
-        expect(config.model).toBe('llama-3.3-70b');
+        expect(config.model).toBe('gpt-oss-120b');
+    });
+
+    test('tracks Sept 2026 flagship defaults', () => {
+        expect(normalizeConfig({ provider: 'openai', apiKey: 'k' }).model).toBe('gpt-6-astra');
+        expect(normalizeConfig({ provider: 'anthropic', apiKey: 'k' }).model).toBe('claude-sonnet-5');
+        expect(normalizeConfig({ provider: 'google', apiKey: 'k' }).model).toBe('gemini-3.8-flash');
+        expect(normalizeConfig({ provider: 'openrouter', apiKey: 'k' }).model).toBe('openai/gpt-6-astra');
+        expect(normalizeConfig({ provider: 'cerebras', apiKey: 'k' }).model).toBe('gpt-oss-120b');
     });
 
     test('does not offer the deprecated llama-4-scout model anywhere', () => {

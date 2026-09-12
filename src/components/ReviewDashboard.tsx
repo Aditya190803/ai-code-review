@@ -409,7 +409,7 @@ export const ReviewDashboard = ({
 
                 const { textStream } = await streamText({
                     model: getModel(config),
-                    system: `You are an automated PR summary generator. Write the response in ${getLanguageLabel(config.reviewLanguage)} using a ${config.reviewTone === 'balanced' ? 'constructive and collaborative' : 'strict production-ready'} tone. Summarize the following git diff into 'Features', 'Fixes', and 'Refactors' categories. Additionally, highlight impact zones, call-flow changes, and cross-file consequences. Output only the markdown summary.`,
+                    instructions: `You are an automated PR summary generator. Write the response in ${getLanguageLabel(config.reviewLanguage)} using a ${config.reviewTone === 'balanced' ? 'constructive and collaborative' : 'strict production-ready'} tone. Summarize the following git diff into 'Features', 'Fixes', and 'Refactors' categories. Additionally, highlight impact zones, call-flow changes, and cross-file consequences. Output only the markdown summary.`,
                     prompt: `Here is the git diff:\n\n${currentDiff}\n\nProject context for the changed files:\n${projectContext}`,
                     // Summaries are long-form, and on a reasoning model the
                     // reasoning trace shares this budget with the visible text.

@@ -83,7 +83,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         id: 'anthropic',
         label: 'Anthropic',
         envKeys: ['ANTHROPIC_API_KEY'],
-        defaultModel: 'claude-sonnet-4-5',
+        defaultModel: 'claude-sonnet-5',
         authModes: ['api'],
         runtime: 'ai-sdk',
         requiresApiKey: true,
@@ -104,7 +104,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         id: 'google',
         label: 'Google Gemini',
         envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
-        defaultModel: 'gemini-2.5-flash',
+        defaultModel: 'gemini-3.8-flash',
         runtime: 'ai-sdk',
         requiresApiKey: true,
         modelListURL: 'https://generativelanguage.googleapis.com/v1beta/models',
@@ -122,7 +122,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         id: 'openai',
         label: 'OpenAI',
         envKeys: ['OPENAI_API_KEY'],
-        defaultModel: 'gpt-5-mini',
+        defaultModel: 'gpt-6-astra',
         authModes: ['api'],
         runtime: 'ai-sdk',
         requiresApiKey: true,
@@ -142,7 +142,7 @@ export const PROVIDERS: ProviderDefinition[] = [
         id: 'openrouter',
         label: 'OpenRouter',
         envKeys: ['OPENROUTER_API_KEY'],
-        defaultModel: 'openai/gpt-5-mini',
+        defaultModel: 'openai/gpt-6-astra',
         runtime: 'ai-sdk',
         requiresApiKey: true,
         baseURL: 'https://openrouter.ai/api/v1',
@@ -156,10 +156,10 @@ export const PROVIDERS: ProviderDefinition[] = [
         id: 'cerebras',
         label: 'Cerebras',
         envKeys: ['CEREBRAS_API_KEY'],
-        // llama-4-scout-17b-16e-instruct was deprecated on 2026-06-17 and no
-        // longer resolves. The live model list is fetched at runtime; this is
-        // only the fallback when that request fails.
-        defaultModel: 'llama-3.3-70b',
+        // The live model list is fetched at runtime; this is only the
+        // fallback when that request fails. gpt-oss-120b is the production
+        // coding/tool-use model on Cerebras public endpoints.
+        defaultModel: 'gpt-oss-120b',
         runtime: 'ai-sdk',
         requiresApiKey: true,
         baseURL: 'https://api.cerebras.ai/v1',
