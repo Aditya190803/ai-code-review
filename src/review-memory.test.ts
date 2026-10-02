@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vite-plus/test';
 import { filterSuppressedIssues, recordReviewFeedback } from './review-memory.js';
 import type { ScanIssue } from './types.js';
 

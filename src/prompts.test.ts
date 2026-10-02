@@ -1,10 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import {
-    getReviewSystemPrompt,
-    getScanSystemPrompt,
-    SCAN_PROMPT_VERSION,
-    TRIAGE_SYSTEM_PROMPT,
-} from './prompts.js';
+import { describe, expect, test } from 'vite-plus/test';
+import { getReviewSystemPrompt, getScanSystemPrompt, SCAN_PROMPT_VERSION, TRIAGE_SYSTEM_PROMPT } from './prompts.js';
 import type { AppConfig } from './types.js';
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
@@ -22,7 +17,7 @@ describe('prompt version', () => {
     test('is stamped with the precision rewrite date', () => {
         // Bumping this invalidates the scan cache, which is intended: findings
         // produced by the old coercive prompt should not be replayed.
-        expect(SCAN_PROMPT_VERSION).toBe('2026-08-09');
+        expect(SCAN_PROMPT_VERSION).toBe('2026-10-02');
     });
 });
 
@@ -89,8 +84,16 @@ describe('machine-parseable scan contract', () => {
         // These names are consumed by parseScanIssues in scanner.ts, the zod
         // IssueSchema, and ISSUE_JSON_SCHEMA in provider-runtime.ts.
         for (const field of [
-            'category', 'severity', 'confidence', 'title', 'line', 'lineEnd',
-            'codeContext', 'description', 'suggestedFix', 'aiPrompt',
+            'category',
+            'severity',
+            'confidence',
+            'title',
+            'line',
+            'lineEnd',
+            'codeContext',
+            'description',
+            'suggestedFix',
+            'aiPrompt',
         ]) {
             expect(scan).toContain(`"${field}"`);
         }
@@ -98,8 +101,14 @@ describe('machine-parseable scan contract', () => {
 
     test('keeps the exact category and severity enums', () => {
         for (const category of [
-            'bug', 'runtime', 'security', 'performance',
-            'style', 'antipattern', 'crossfile', 'test',
+            'bug',
+            'runtime',
+            'security',
+            'performance',
+            'style',
+            'antipattern',
+            'crossfile',
+            'test',
         ]) {
             expect(scan).toContain(`"${category}"`);
         }

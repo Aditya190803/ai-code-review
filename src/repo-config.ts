@@ -1,8 +1,7 @@
 import * as fs from 'fs-extra';
 import type { RepoReviewConfig } from './types.js';
 
-const DEFAULT_REPO_CONFIG = `.ai-review.yaml
-# AI Code Review configuration
+const DEFAULT_REPO_CONFIG = `# AI Code Review configuration
 reviewProfile: assertive
 severityThreshold: info
 failOn: critical
@@ -29,6 +28,7 @@ mcp: false
 
 function parseScalar(value: string): unknown {
     const trimmed = value.trim();
+    if (trimmed === '[]') return [];
     if (trimmed === 'true') return true;
     if (trimmed === 'false') return false;
     if (trimmed === '') return '';

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vite-plus/test';
 import { pathInstructionsForFile } from './review-context.js';
 
 describe('pathInstructionsForFile', () => {
@@ -14,9 +14,7 @@ describe('pathInstructionsForFile', () => {
     });
 
     test('returns empty when no rules match', () => {
-        const text = pathInstructionsForFile('docs/readme.md', [
-            { path: 'src/**', instructions: 'x' },
-        ]);
+        const text = pathInstructionsForFile('docs/readme.md', [{ path: 'src/**', instructions: 'x' }]);
         expect(text).toBe('');
     });
 });

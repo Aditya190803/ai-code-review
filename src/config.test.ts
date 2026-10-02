@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vite-plus/test';
 import { fetchModels, normalizeConfig } from './config.js';
 import { PROVIDERS } from './providers.js';
 
@@ -75,22 +75,18 @@ describe('normalizeConfig', () => {
 describe('fetchModels', () => {
     test('fetches OpenCode remote models before using the static fallback', async () => {
         const originalFetch = globalThis.fetch;
-        globalThis.fetch = (async () => new Response(JSON.stringify({
-            data: [
-                { id: 'big-pickle' },
-                { id: 'reasoning-model' },
-                { id: 'fast-review-model' },
-            ],
-        }), { status: 200 })) as unknown as typeof fetch;
+        globalThis.fetch = (async () =>
+            new Response(
+                JSON.stringify({
+                    data: [{ id: 'big-pickle' }, { id: 'reasoning-model' }, { id: 'fast-review-model' }],
+                }),
+                { status: 200 },
+            )) as unknown as typeof fetch;
 
         try {
             const models = await fetchModels('opencode', 'test-key');
 
-            expect(models.map((model) => model.value)).toEqual([
-                'big-pickle',
-                'reasoning-model',
-                'fast-review-model',
-            ]);
+            expect(models.map((model) => model.value)).toEqual(['big-pickle', 'reasoning-model', 'fast-review-model']);
         } finally {
             globalThis.fetch = originalFetch;
         }

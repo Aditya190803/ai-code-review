@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { streamText } from 'ai';
 import clipboard from 'clipboardy';
-import { getModel, validateApiKey } from '../config.js';
+import { getModel, checkProviderHealth } from '../config.js';
 import { getProviderMaxOutputTokens } from '../providers.js';
+import { isExternalProvider, runExternalText } from '../provider-runtime.js';
 import { git, getDiff, getCodeFiles, getChangedCodeFiles } from '../git.js';
 import { ensureProjectIndex, getProjectContext } from '../project-index.js';
 import { scanCodebase } from '../scanner.js';
@@ -71,28 +72,18 @@ function formatAllIssuesForCopy(issues: ScanIssue[]): string {
     return lines.join('\n');
 }
 
-export const ReviewDashboard = ({
-    config,
-    onResetConfig,
-}: {
-    config: AppConfig;
-    onResetConfig: () => void;
-}) => {
+export const ReviewDashboard = ({ config, onResetConfig }: { config: AppConfig; onResetConfig: () => void }) => {
     const { exit } = useApp();
     const { cols, rows } = useTerminalSize();
-    const [review, setReview] = useState<string>(
-        'Welcome! Select an action below to get started.'
-    );
-    const [logs, setLogs] = useState<string[]>([]);
+    const [review, setReview] = useState<string>('Welcome! Select an action below to get started.');
+    const [, setLogs] = useState<string[]>([]);
     const [isTyping, setIsTyping] = useState<boolean>(false);
     const [scanProgress, setScanProgress] = useState<string>('');
     const [scanIssues, setScanIssues] = useState<ScanIssue[]>([]);
     const [scanDuration, setScanDuration] = useState<number | null>(null);
     const [activeIssue, setActiveIssue] = useState<ScanIssue | null>(null);
     const [issueListState, setIssueListState] = useState(createInitialIssueListState);
-    const [viewMode, setViewMode] = useState<
-        'dashboard' | 'issues' | 'detail' | 'review_result' | 'help'
-    >('dashboard');
+    const [viewMode, setViewMode] = useState<'dashboard' | 'issues' | 'detail' | 'review_result' | 'help'>('dashboard');
     const [confirmExit, setConfirmExit] = useState(false);
     const [hasExited, setHasExited] = useState(false);
     const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -103,15 +94,21 @@ export const ReviewDashboard = ({
     const scanAbortControllerRef = useRef<AbortController | null>(null);
     const lastEscTimeRef = useRef<number>(0);
 
-    const [repoState, setRepoState] = useState<{ path: string; branch: string; added: number; modified: number; filesChanged: number }>({
+    const [repoState, setRepoState] = useState<{
+        path: string;
+        branch: string;
+        added: number;
+        modified: number;
+        filesChanged: number;
+    }>({
         path: process.cwd().split('/').pop() || process.cwd(),
         branch: 'main',
         added: 0,
         modified: 0,
-        filesChanged: 0
+        filesChanged: 0,
     });
     const orderedIssueItems = getIssueListItems(scanIssues, issueListState).items.filter(
-        (item): item is { type: 'issue'; issue: ScanIssue; file: string } => item.type === 'issue'
+        (item): item is { type: 'issue'; issue: ScanIssue; file: string } => item.type === 'issue',
     );
     const orderedIssues = orderedIssueItems.map((item) => item.issue);
     const isCompact = cols < 110 || rows < 34;
@@ -129,18 +126,18 @@ export const ReviewDashboard = ({
                 // Fallback to reading file diffs roughly if status implies differently
                 if (filesCount === 0 && s.not_added.length > 0) filesCount += s.not_added.length;
 
-                setRepoState(prev => ({
+                setRepoState((prev) => ({
                     ...prev,
                     branch: b.current || 'main',
                     filesChanged: filesCount,
                     added: addCount + s.not_added.length,
                     modified: modCount,
                 }));
-            } catch (err) {
+            } catch {
                 // Ignore GIT status errors.
             }
         }
-        loadGitStatus();
+        void loadGitStatus();
     }, []);
 
     useEffect(() => {
@@ -151,7 +148,7 @@ export const ReviewDashboard = ({
                 const files = await getCodeFiles();
                 if (files.length === 0 || isCancelled) return;
                 await ensureProjectIndex(files);
-            } catch (err) {
+            } catch {
                 // Background indexing is best-effort only.
             }
         }
@@ -166,7 +163,7 @@ export const ReviewDashboard = ({
     useEffect(() => {
         setIssueListState((prev) => {
             const nextCollapsed = { ...prev.collapsed };
-            for (const file of [...new Set(scanIssues.map((issue) => issue.file))]) {
+            for (const file of new Set(scanIssues.map((issue) => issue.file))) {
                 if (!(file in nextCollapsed)) {
                     nextCollapsed[file] = true;
                 }
@@ -203,18 +200,20 @@ export const ReviewDashboard = ({
     const renderActionToast = () => {
         if (!actionNotice) return null;
 
-        const noticeColor = actionNoticeKind === 'success'
-            ? 'green'
-            : actionNoticeKind === 'error'
-                ? 'red'
-                : actionNoticeKind === 'warning'
+        const noticeColor =
+            actionNoticeKind === 'success'
+                ? 'green'
+                : actionNoticeKind === 'error'
+                  ? 'red'
+                  : actionNoticeKind === 'warning'
                     ? 'yellow'
                     : 'blue';
-        const textColor = actionNoticeKind === 'success'
-            ? 'greenBright'
-            : actionNoticeKind === 'error'
-                ? 'redBright'
-                : actionNoticeKind === 'warning'
+        const textColor =
+            actionNoticeKind === 'success'
+                ? 'greenBright'
+                : actionNoticeKind === 'error'
+                  ? 'redBright'
+                  : actionNoticeKind === 'warning'
                     ? 'yellow'
                     : 'whiteBright';
 
@@ -248,21 +247,21 @@ export const ReviewDashboard = ({
             showActionNotice(`Copied ${scanIssues.length} issues to clipboard`, 'success');
             addLog(`Copied all ${scanIssues.length} issues, fixes, and prompts to clipboard!`);
         } catch {
-            clipboard.write(text).then(() => {
-                showActionNotice(`Copied ${scanIssues.length} issues to clipboard`, 'success');
-                addLog(`Copied all ${scanIssues.length} issues, fixes, and prompts to clipboard!`);
-            }).catch(() => {
-                showActionNotice('Clipboard copy failed', 'error');
-                addLog('Could not copy to clipboard (clipboard unavailable).');
-            });
+            clipboard
+                .write(text)
+                .then(() => {
+                    showActionNotice(`Copied ${scanIssues.length} issues to clipboard`, 'success');
+                    addLog(`Copied all ${scanIssues.length} issues, fixes, and prompts to clipboard!`);
+                })
+                .catch(() => {
+                    showActionNotice('Clipboard copy failed', 'error');
+                    addLog('Could not copy to clipboard (clipboard unavailable).');
+                });
         }
     };
 
     // ── Handle Menu Command Selection ──
-    const handleSelectCommand = async (item: {
-        label: string;
-        value: string;
-    }) => {
+    const handleSelectCommand = async (item: { label: string; value: string }) => {
         if (item.value === 'cancel' || item.value === 'quit') {
             doGracefulExit();
             return;
@@ -301,27 +300,31 @@ export const ReviewDashboard = ({
                     return;
                 }
 
-                const isValid = await validateApiKey(config);
-                if (!isValid) {
-                    showReviewResult('Invalid API key/account auth or model. Please check your settings.');
+                const health = await checkProviderHealth(config);
+                if (!health.ok) {
+                    showReviewResult(`Provider validation failed: ${health.error}`);
                     return;
                 }
 
-                const result = await scanCodebase(config, {
-                    onProgress: setScanProgress,
-                    onLog: (msg) => setLogs((prev) => [...prev, msg]),
-                    onIssuesUpdate: setScanIssues,
-                    onReviewUpdate: setReview,
-                }, changedFiles, scanAbortControllerRef.current.signal);
+                const result = await scanCodebase(
+                    config,
+                    {
+                        onProgress: setScanProgress,
+                        onLog: (msg) => setLogs((prev) => [...prev, msg]),
+                        onIssuesUpdate: setScanIssues,
+                        onReviewUpdate: setReview,
+                    },
+                    changedFiles,
+                    scanAbortControllerRef.current.signal,
+                );
 
                 setScanDuration(result.durationSecs);
                 setScanProgress('');
 
-                if (result.issues.length > 0) {
-                    scanTimerRef.current = setTimeout(
-                        () => setViewMode('issues'),
-                        800
-                    );
+                if (!result.complete) {
+                    setViewMode('review_result');
+                } else if (result.issues.length > 0) {
+                    scanTimerRef.current = setTimeout(() => setViewMode('issues'), 800);
                 } else {
                     setViewMode('review_result');
                 }
@@ -345,27 +348,31 @@ export const ReviewDashboard = ({
             scanAbortControllerRef.current = new AbortController();
 
             try {
-                const isValid = await validateApiKey(config);
-                if (!isValid) {
-                    showReviewResult('Invalid API key/account auth or model. Please check your settings.');
+                const health = await checkProviderHealth(config);
+                if (!health.ok) {
+                    showReviewResult(`Provider validation failed: ${health.error}`);
                     return;
                 }
 
-                const result = await scanCodebase(config, {
-                    onProgress: setScanProgress,
-                    onLog: (msg) => setLogs((prev) => [...prev, msg]),
-                    onIssuesUpdate: setScanIssues,
-                    onReviewUpdate: setReview,
-                }, undefined, scanAbortControllerRef.current.signal);
+                const result = await scanCodebase(
+                    config,
+                    {
+                        onProgress: setScanProgress,
+                        onLog: (msg) => setLogs((prev) => [...prev, msg]),
+                        onIssuesUpdate: setScanIssues,
+                        onReviewUpdate: setReview,
+                    },
+                    undefined,
+                    scanAbortControllerRef.current.signal,
+                );
 
                 setScanDuration(result.durationSecs);
                 setScanProgress('');
 
-                if (result.issues.length > 0) {
-                    scanTimerRef.current = setTimeout(
-                        () => setViewMode('issues'),
-                        800
-                    );
+                if (!result.complete) {
+                    setViewMode('review_result');
+                } else if (result.issues.length > 0) {
+                    scanTimerRef.current = setTimeout(() => setViewMode('issues'), 800);
                 } else {
                     setViewMode('review_result');
                 }
@@ -385,9 +392,7 @@ export const ReviewDashboard = ({
                 const currentDiff = await getDiff();
 
                 if (!currentDiff) {
-                    addLog(
-                        'No uncommitted or staged changes found to summarize.'
-                    );
+                    addLog('No uncommitted or staged changes found to summarize.');
                     setIsTyping(false);
                     return;
                 }
@@ -397,20 +402,35 @@ export const ReviewDashboard = ({
 
                 const changedFiles = await getChangedCodeFiles();
                 const allFiles = await getCodeFiles();
-                const projectIndex = allFiles.length > 0
-                    ? await ensureProjectIndex(allFiles)
-                    : null;
-                const projectContext = projectIndex && changedFiles.length > 0
-                    ? changedFiles
-                        .slice(0, 6)
-                        .map((file, index) => `--- changed file ${index + 1} ---\n${getProjectContext(projectIndex, file, { changedFiles })}`)
-                        .join('\n\n')
-                    : 'No project index context available.';
+                const projectIndex = allFiles.length > 0 ? await ensureProjectIndex(allFiles) : null;
+                const projectContext =
+                    projectIndex && changedFiles.length > 0
+                        ? changedFiles
+                              .slice(0, 6)
+                              .map(
+                                  (file, index) =>
+                                      `--- changed file ${index + 1} ---\n${getProjectContext(projectIndex, file, { changedFiles })}`,
+                              )
+                              .join('\n\n')
+                        : 'No project index context available.';
 
-                const { textStream } = await streamText({
+                const instructions = `You are an automated PR summary generator. Write the response in ${getLanguageLabel(config.reviewLanguage)} using a ${config.reviewTone === 'balanced' ? 'constructive and collaborative' : 'strict production-ready'} tone. Summarize the following git diff into 'Features', 'Fixes', and 'Refactors' categories. Additionally, highlight impact zones, call-flow changes, and cross-file consequences. Output only the markdown summary.`;
+                const prompt = `Here is the git diff:\n\n${currentDiff}\n\nProject context for the changed files:\n${projectContext}`;
+                scanAbortControllerRef.current = new AbortController();
+                const abortSignal = AbortSignal.any([
+                    scanAbortControllerRef.current.signal,
+                    AbortSignal.timeout(180_000),
+                ]);
+                if (isExternalProvider(config)) {
+                    setReview(await runExternalText(config, instructions, prompt, abortSignal));
+                    addLog('Summary generated. Press "c" in the review screen to copy.');
+                    return;
+                }
+                const { textStream } = streamText({
                     model: getModel(config),
-                    instructions: `You are an automated PR summary generator. Write the response in ${getLanguageLabel(config.reviewLanguage)} using a ${config.reviewTone === 'balanced' ? 'constructive and collaborative' : 'strict production-ready'} tone. Summarize the following git diff into 'Features', 'Fixes', and 'Refactors' categories. Additionally, highlight impact zones, call-flow changes, and cross-file consequences. Output only the markdown summary.`,
-                    prompt: `Here is the git diff:\n\n${currentDiff}\n\nProject context for the changed files:\n${projectContext}`,
+                    instructions,
+                    prompt,
+                    abortSignal,
                     // Summaries are long-form, and on a reasoning model the
                     // reasoning trace shares this budget with the visible text.
                     maxOutputTokens: getProviderMaxOutputTokens(config.provider),
@@ -425,6 +445,7 @@ export const ReviewDashboard = ({
                 addLog('Summary generated. Press "c" in the review screen to copy.');
             } catch (e) {
                 logError(`Summary failed: ${(e as Error).message}`);
+                showReviewResult(`Summary failed: ${(e as Error).message}`);
             } finally {
                 setIsTyping(false);
             }
@@ -535,7 +556,15 @@ export const ReviewDashboard = ({
                 </Box>
                 <Box paddingX={2} marginTop={1}>
                     <Text color="white">
-                        Press <Text color="red" bold>Ctrl+C</Text> again to confirm exit, or <Text color="green" bold>any other key</Text> to cancel.
+                        Press{' '}
+                        <Text color="red" bold>
+                            Ctrl+C
+                        </Text>{' '}
+                        again to confirm exit, or{' '}
+                        <Text color="green" bold>
+                            any other key
+                        </Text>{' '}
+                        to cancel.
                     </Text>
                 </Box>
             </Box>
@@ -546,18 +575,42 @@ export const ReviewDashboard = ({
         return (
             <Box flexDirection="column" padding={1}>
                 <Box borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1} flexDirection="column">
-                    <Text bold color="cyan">Keyboard Shortcuts Help</Text>
+                    <Text bold color="cyan">
+                        Keyboard Shortcuts Help
+                    </Text>
                     <Box marginTop={1} flexDirection="column">
-                        <Text><Text color="yellow" bold>Dashboard:</Text></Text>
-                        <Text>  ↑/↓: Navigate menu  ·  Enter/Space: Select action</Text>
-                        <Text>  Mouse Wheel: Scroll selections  ·  ?: This help screen  ·  Ctrl+C: Quit</Text>
+                        <Text>
+                            <Text color="yellow" bold>
+                                Dashboard:
+                            </Text>
+                        </Text>
+                        <Text> ↑/↓: Navigate menu · Enter/Space: Select action</Text>
+                        <Text> Mouse Wheel: Scroll selections · ?: This help screen · Ctrl+C: Quit</Text>
 
-                        <Box marginTop={1}><Text><Text color="yellow" bold>Issue List:</Text></Text></Box>
-                        <Text>  ↑/↓ or Mouse Wheel: Navigate  ·  Enter/Space: Open/Collapse  ·  →: Open issue  ·  /: Filter</Text>
-                        <Text>  PgUp/PgDn: Jump  ·  s: Change sort  ·  t: Filter category  ·  Esc: Back</Text>
+                        <Box marginTop={1}>
+                            <Text>
+                                <Text color="yellow" bold>
+                                    Issue List:
+                                </Text>
+                            </Text>
+                        </Box>
+                        <Text>
+                            {' '}
+                            ↑/↓ or Mouse Wheel: Navigate · Enter/Space: Open/Collapse · →: Open issue · /: Filter
+                        </Text>
+                        <Text> PgUp/PgDn: Jump · s: Change sort · t: Filter category · Esc: Back</Text>
 
-                        <Box marginTop={1}><Text><Text color="yellow" bold>Issue Detail:</Text></Text></Box>
-                        <Text>  ↑/↓ or Mouse Wheel: Scroll  ·  PgUp/PgDn: Jump  ·  c: Copy AI Prompt  ·  Esc: Back to list</Text>
+                        <Box marginTop={1}>
+                            <Text>
+                                <Text color="yellow" bold>
+                                    Issue Detail:
+                                </Text>
+                            </Text>
+                        </Box>
+                        <Text>
+                            {' '}
+                            ↑/↓ or Mouse Wheel: Scroll · PgUp/PgDn: Jump · c: Copy AI Prompt · Esc: Back to list
+                        </Text>
                     </Box>
                 </Box>
                 <Box marginTop={1}>
@@ -569,10 +622,11 @@ export const ReviewDashboard = ({
 
     // ── Render Issue Sub-Views ──
     if (viewMode === 'detail' && activeIssue) {
-        const activeIssueIndex = orderedIssues.findIndex((candidate) =>
-            candidate.file === activeIssue.file &&
-            candidate.line === activeIssue.line &&
-            candidate.title === activeIssue.title
+        const activeIssueIndex = orderedIssues.findIndex(
+            (candidate) =>
+                candidate.file === activeIssue.file &&
+                candidate.line === activeIssue.line &&
+                candidate.title === activeIssue.title,
         );
 
         if (activeIssueIndex < 0) {
@@ -583,9 +637,7 @@ export const ReviewDashboard = ({
                         <Text color="yellow" bold>
                             The selected issue is no longer available in the current list.
                         </Text>
-                        <Text color="whiteBright">
-                            Press Esc to return to the issue list.
-                        </Text>
+                        <Text color="whiteBright">Press Esc to return to the issue list.</Text>
                     </Box>
                 </Box>
             );
@@ -617,10 +669,7 @@ export const ReviewDashboard = ({
         return (
             <Box flexDirection="column" flexGrow={1}>
                 {renderActionToast()}
-                <ReviewResultView
-                    content={review}
-                    onBack={() => setViewMode('dashboard')}
-                />
+                <ReviewResultView content={review} onBack={() => setViewMode('dashboard')} />
             </Box>
         );
     }
@@ -649,21 +698,21 @@ export const ReviewDashboard = ({
     // ── Render Main Dashboard ──
 
     const LOGO = [
-        { text: " █████╗ ██╗      ██████╗ ███████╗██╗   ██╗██╗███████╗██╗    ██╗", color: "#FF5F58" },
-        { text: "██╔══██╗██║      ██╔══██╗██╔════╝██║   ██║██║██╔════╝██║    ██║", color: "#FF785A" },
-        { text: "███████║██║█████╗██████╔╝█████╗  ██║   ██║██║█████╗  ██║ █╗ ██║", color: "#FF915C" },
-        { text: "██╔══██║██║╚════╝██╔══██╗██╔══╝  ╚██╗ ██╔╝██║██╔══╝  ██║███╗██║", color: "#FFAA5F" },
-        { text: "██║  ██║██║      ██║  ██║███████╗ ╚████╔╝ ██║███████╗╚███╔███╔╝", color: "#FFC361" },
-        { text: "╚═╝  ╚═╝╚═╝      ╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝ ", color: "#FFDC64" }
+        { text: ' █████╗ ██╗      ██████╗ ███████╗██╗   ██╗██╗███████╗██╗    ██╗', color: '#FF5F58' },
+        { text: '██╔══██╗██║      ██╔══██╗██╔════╝██║   ██║██║██╔════╝██║    ██║', color: '#FF785A' },
+        { text: '███████║██║█████╗██████╔╝█████╗  ██║   ██║██║█████╗  ██║ █╗ ██║', color: '#FF915C' },
+        { text: '██╔══██║██║╚════╝██╔══██╗██╔══╝  ╚██╗ ██╔╝██║██╔══╝  ██║███╗██║', color: '#FFAA5F' },
+        { text: '██║  ██║██║      ██║  ██║███████╗ ╚████╔╝ ██║███████╗╚███╔███╔╝', color: '#FFC361' },
+        { text: '╚═╝  ╚═╝╚═╝      ╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝ ', color: '#FFDC64' },
     ];
     const actionItems = [
         ...(scanIssues.length > 0
             ? [
-                {
-                    label: `View Last Scan Results (${scanIssues.length})`,
-                    value: 'browse_issues',
-                }
-            ]
+                  {
+                      label: `View Last Scan Results (${scanIssues.length})`,
+                      value: 'browse_issues',
+                  },
+              ]
             : []),
         {
             label: scanIssues.length > 0 ? 'New Scan: Staged/Unstaged Changes' : 'Review Staged/Unstaged Changes',
@@ -675,11 +724,11 @@ export const ReviewDashboard = ({
         },
         ...(scanIssues.length > 0
             ? [
-                {
-                    label: `Copy All Errors, Fixes & Prompts (${scanIssues.length})`,
-                    value: 'copy_all_issues',
-                },
-            ]
+                  {
+                      label: `Copy All Errors, Fixes & Prompts (${scanIssues.length})`,
+                      value: 'copy_all_issues',
+                  },
+              ]
             : []),
         {
             label: 'Generate PR Summary',
@@ -697,21 +746,31 @@ export const ReviewDashboard = ({
     if (isTyping) {
         return (
             <Box flexDirection="column" padding={2} flexGrow={1} alignItems="center" justifyContent="center">
-                <Text color="blueBright" bold>Scanning Codebase...</Text>
+                <Text color="blueBright" bold>
+                    Scanning Codebase...
+                </Text>
                 {scanProgress && (
                     <Box marginTop={1}>
                         <Text color="yellow">{scanProgress}</Text>
                     </Box>
                 )}
                 <Box marginTop={2}>
-                    <Text color="gray" dimColor>Press ESC twice to cancel</Text>
+                    <Text color="gray" dimColor>
+                        Press ESC twice to cancel
+                    </Text>
                 </Box>
             </Box>
         );
     }
 
     return (
-        <Box flexDirection="column" flexGrow={1} height="100%" paddingX={isCramped ? 2 : 4} paddingY={isCramped ? 1 : 2}>
+        <Box
+            flexDirection="column"
+            flexGrow={1}
+            height="100%"
+            paddingX={isCramped ? 2 : 4}
+            paddingY={isCramped ? 1 : 2}
+        >
             {renderActionToast()}
             <Box
                 flexDirection="column"
@@ -721,17 +780,23 @@ export const ReviewDashboard = ({
             >
                 <Box flexDirection="column" alignItems="center" marginBottom={isCramped ? 1 : 2}>
                     {isCramped ? (
-                        <Text color="#FF915C" bold>AI REVIEW</Text>
+                        <Text color="#FF915C" bold>
+                            AI REVIEW
+                        </Text>
                     ) : isCompact ? (
                         <>
-                            <Text color="#FF5F58" bold>AI REVIEW</Text>
+                            <Text color="#FF5F58" bold>
+                                AI REVIEW
+                            </Text>
                             <Box marginTop={1}>
                                 <Text color="gray">terminal code review assistant</Text>
                             </Box>
                         </>
                     ) : (
                         LOGO.map((line, idx) => (
-                            <Text key={idx} color={line.color} bold>{line.text}</Text>
+                            <Text key={idx} color={line.color} bold>
+                                {line.text}
+                            </Text>
                         ))
                     )}
                 </Box>
@@ -741,7 +806,10 @@ export const ReviewDashboard = ({
                         repo: <Text color="white">{repoState.path}</Text>
                     </Text>
                     <Text color="gray">
-                        comparing: <Text color="white">{repoState.branch} → {repoState.branch} (base)</Text>
+                        comparing:{' '}
+                        <Text color="white">
+                            {repoState.branch} → {repoState.branch} (base)
+                        </Text>
                     </Text>
                     {isCramped ? (
                         <>
@@ -752,44 +820,40 @@ export const ReviewDashboard = ({
                                 model: <Text color="white">{config.model}</Text>
                             </Text>
                             <Text color="gray">
-                                language: <Text color="white">{getLanguageLabel(config.reviewLanguage)}</Text>  ·  tone: <Text color="white">{config.reviewTone || 'strict'}</Text>
+                                language: <Text color="white">{getLanguageLabel(config.reviewLanguage)}</Text> · tone:{' '}
+                                <Text color="white">{config.reviewTone || 'strict'}</Text>
                             </Text>
                         </>
                     ) : (
                         <>
                             <Text color="gray">
-                                provider: <Text color="white">{config.provider}</Text>  ·  model: <Text color="white">{config.model}</Text>
+                                provider: <Text color="white">{config.provider}</Text> · model:{' '}
+                                <Text color="white">{config.model}</Text>
                             </Text>
                             <Text color="gray">
-                                review language: <Text color="white">{getLanguageLabel(config.reviewLanguage)}</Text>  ·  tone: <Text color="white">{config.reviewTone || 'strict'}</Text>
+                                review language: <Text color="white">{getLanguageLabel(config.reviewLanguage)}</Text> ·
+                                tone: <Text color="white">{config.reviewTone || 'strict'}</Text>
                             </Text>
                         </>
                     )}
                 </Box>
 
                 <Box flexDirection="column" alignItems="center">
-                    <Text color="white">
-                        {repoState.filesChanged} Files changed
-                    </Text>
+                    <Text color="white">{repoState.filesChanged} Files changed</Text>
                     <Text color="gray">
                         {repoState.added} added | {repoState.modified} modified
                     </Text>
                     <Text>
-                        <Text color="green">+{Math.max(1, repoState.filesChanged * 14)} insertions</Text> <Text color="gray">|</Text> <Text color="red">-{repoState.modified * 3} deletions</Text>
+                        <Text color="green">+{Math.max(1, repoState.filesChanged * 14)} insertions</Text>{' '}
+                        <Text color="gray">|</Text> <Text color="red">-{repoState.modified * 3} deletions</Text>
                     </Text>
                 </Box>
             </Box>
 
             <Box flexDirection="column" alignItems="flex-start" marginTop={isCramped ? 1 : 2}>
-                <SelectableList
-                    items={actionItems}
-                    onSelect={handleSelectCommand}
-                    limit={menuLimit}
-                />
+                <SelectableList items={actionItems} onSelect={handleSelectCommand} limit={menuLimit} />
                 <Box marginTop={1}>
-                    <Text color="gray">
-                        ↑↓ or mouse wheel navigate  ·  Enter/Space select  ·  ? help
-                    </Text>
+                    <Text color="gray">↑↓ or mouse wheel navigate · Enter/Space select · ? help</Text>
                 </Box>
             </Box>
         </Box>

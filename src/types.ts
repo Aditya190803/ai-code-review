@@ -27,13 +27,27 @@ export interface AppConfig {
     reviewLanguage?: string;
     uiLanguage?: string;
     reviewTone?: 'balanced' | 'strict';
-    providerOptions?: Record<string, {
-        baseURL?: string;
-        modelListURL?: string;
-    }>;
+    providerOptions?: Record<
+        string,
+        {
+            baseURL?: string;
+            modelListURL?: string;
+        }
+    >;
 }
 
 export type ReviewScope = 'all' | 'staged' | 'unstaged' | 'uncommitted' | 'committed';
+export interface ReviewSelection {
+    scope: ReviewScope;
+    base?: string;
+    baseCommit?: string;
+}
+
+export interface ReviewCompletion {
+    complete: boolean;
+    failedFiles: string[];
+    skippedFiles: string[];
+}
 export type ReviewOutput = 'plain' | 'json' | 'sarif' | 'diff' | 'github';
 
 export interface PathInstruction {

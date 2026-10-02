@@ -1,7 +1,37 @@
-import { describe, expect, test } from 'bun:test';
-import { parseCliArgs } from './cli.js';
+import { describe, expect, test } from 'vite-plus/test';
+import { parseCliArgs, mergeRepoConfig } from './cli.js';
 
 describe('parseCliArgs', () => {
+    test('switching providers does not carry the repository model or another provider key', () => {
+        const parsed = parseCliArgs(['review', '--provider', 'anthropic']);
+        const config = mergeRepoConfig(
+            {
+                provider: 'openai',
+                model: 'saved-openai-model',
+                apiKey: 'saved-openai-key',
+                keys: { anthropic: 'saved-anthropic-key' },
+            },
+            parsed,
+            'codex',
+            'codex-default',
+        );
+        expect(config.provider).toBe('anthropic');
+        expect(config.model).not.toBe('codex-default');
+        expect(config.model).not.toBe('saved-openai-model');
+        expect(config.apiKey).toBe('saved-anthropic-key');
+    });
+    test('rejects invalid scope, provider and missing flag values', () => {
+        expect(() => parseCliArgs(['review', '--type', 'typo'])).toThrow('Unknown review scope');
+        expect(() => parseCliArgs(['review', '--provider', 'typo'])).toThrow('Unknown provider');
+        expect(() => parseCliArgs(['review', '--base'])).toThrow('requires a value');
+        expect(() => parseCliArgs(['review', '--model', '--all'])).toThrow('requires a value');
+    });
+    test('provider and model overrides accept spaced and equals forms', () => {
+        expect(parseCliArgs(['review', '--provider', 'codex', '--model=codex-default'])).toMatchObject({
+            provider: 'codex',
+            model: 'codex-default',
+        });
+    });
     test('defaults to non-interactive uncommitted review', () => {
         const args = parseCliArgs([]);
 

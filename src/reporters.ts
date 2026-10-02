@@ -1,6 +1,6 @@
 import { renderDiffReview } from './diff-inline.js';
 import { buildGithubCommentBody } from './pr-summary.js';
-import type { ReviewOutput, ScanIssue } from './types.js';
+import type { ReviewOutput, ScanIssue, ReviewCompletion, ReviewSelection } from './types.js';
 
 const severityRank: Record<string, number> = {
     info: 1,
@@ -32,7 +32,9 @@ export function formatIssue(issue: ScanIssue, index: number): string {
         `   ${location} · ${issue.category}`,
         issue.description ? `   ${issue.description}` : '',
         issue.suggestedFix ? `   Fix: ${issue.suggestedFix.replace(/\n/g, '\n   ')}` : '',
-    ].filter(Boolean).join('\n');
+    ]
+        .filter(Boolean)
+        .join('\n');
 }
 
 export function renderPlainReview(issues: ScanIssue[], durationSecs: number, files: string[]): string {
@@ -46,7 +48,11 @@ export function renderPlainReview(issues: ScanIssue[], durationSecs: number, fil
         `AI Code Review complete in ${durationSecs}s`,
         `Files reviewed: ${files.length}`,
         `Findings: ${sorted.length}`,
-        `Severity: ${Object.entries(counts).map(([key, value]) => `${key}=${value}`).join(', ') || 'none'}`,
+        `Severity: ${
+            Object.entries(counts)
+                .map(([key, value]) => `${key}=${value}`)
+                .join(', ') || 'none'
+        }`,
         '',
     ];
 
@@ -59,17 +65,34 @@ export function renderPlainReview(issues: ScanIssue[], durationSecs: number, fil
     return lines.join('\n');
 }
 
-export function renderJsonReview(issues: ScanIssue[], durationSecs: number, files: string[]): string {
-    return JSON.stringify({
-        tool: 'ai-review',
-        durationSecs,
-        filesReviewed: files.length,
-        findings: issues.length,
-        issues,
-    }, null, 2);
+export function renderJsonReview(
+    issues: ScanIssue[],
+    durationSecs: number,
+    files: string[],
+    completion?: ReviewCompletion,
+): string {
+    return JSON.stringify(
+        {
+            tool: 'ai-review',
+            durationSecs,
+            filesReviewed: files.length,
+            findings: issues.length,
+            issues,
+            complete: completion?.complete ?? true,
+            failedFiles: completion?.failedFiles ?? [],
+            skippedFiles: completion?.skippedFiles ?? [],
+        },
+        null,
+        2,
+    );
 }
 
-export function renderSarifReview(issues: ScanIssue[], durationSecs: number, files: string[]): string {
+export function renderSarifReview(
+    issues: ScanIssue[],
+    durationSecs: number,
+    files: string[],
+    completion?: ReviewCompletion,
+): string {
     const rules = new Map<string, { id: string; name: string; shortDescription: { text: string } }>();
 
     for (const issue of issues) {
@@ -85,58 +108,64 @@ export function renderSarifReview(issues: ScanIssue[], durationSecs: number, fil
         }
     }
 
-    return JSON.stringify({
-        version: '2.1.0',
-        $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
-        runs: [
-            {
-                tool: {
-                    driver: {
-                        name: 'AI Code Review',
-                        informationUri: 'https://github.com/Aditya190803/ai-code-review',
-                        rules: [...rules.values()],
-                    },
-                },
-                invocations: [
-                    {
-                        executionSuccessful: true,
-                        properties: {
-                            durationSecs,
-                            filesReviewed: files.length,
+    return JSON.stringify(
+        {
+            version: '2.1.0',
+            $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
+            runs: [
+                {
+                    tool: {
+                        driver: {
+                            name: 'AI Code Review',
+                            informationUri: 'https://github.com/Aditya190803/ai-code-review',
+                            rules: [...rules.values()],
                         },
                     },
-                ],
-                results: issues.map((issue) => ({
-                    ruleId: ruleId(issue),
-                    level: sarifLevel(issue),
-                    message: {
-                        text: [issue.title, issue.description].filter(Boolean).join(': '),
-                    },
-                    locations: [
+                    invocations: [
                         {
-                            physicalLocation: {
-                                artifactLocation: {
-                                    uri: issue.file,
-                                },
-                                region: {
-                                    startLine: Math.max(1, issue.line || 1),
-                                    endLine: Math.max(issue.lineEnd || issue.line || 1, issue.line || 1),
-                                },
+                            executionSuccessful: completion?.complete ?? true,
+                            properties: {
+                                durationSecs,
+                                filesReviewed: files.length,
+                                failedFiles: completion?.failedFiles ?? [],
+                                skippedFiles: completion?.skippedFiles ?? [],
                             },
                         },
                     ],
-                    properties: {
-                        category: issue.category,
-                        severity: issue.severity,
-                        confidence: issue.confidence,
-                        suggestedFix: issue.suggestedFix,
-                        aiPrompt: issue.aiPrompt,
-                        codeContext: issue.codeContext,
-                    },
-                })),
-            },
-        ],
-    }, null, 2);
+                    results: issues.map((issue) => ({
+                        ruleId: ruleId(issue),
+                        level: sarifLevel(issue),
+                        message: {
+                            text: [issue.title, issue.description].filter(Boolean).join(': '),
+                        },
+                        locations: [
+                            {
+                                physicalLocation: {
+                                    artifactLocation: {
+                                        uri: issue.file,
+                                    },
+                                    region: {
+                                        startLine: Math.max(1, issue.line || 1),
+                                        endLine: Math.max(issue.lineEnd || issue.line || 1, issue.line || 1),
+                                    },
+                                },
+                            },
+                        ],
+                        properties: {
+                            category: issue.category,
+                            severity: issue.severity,
+                            confidence: issue.confidence,
+                            suggestedFix: issue.suggestedFix,
+                            aiPrompt: issue.aiPrompt,
+                            codeContext: issue.codeContext,
+                        },
+                    })),
+                },
+            ],
+        },
+        null,
+        2,
+    );
 }
 
 export async function renderReview(
@@ -144,11 +173,15 @@ export async function renderReview(
     issues: ScanIssue[],
     durationSecs: number,
     files: string[],
-    options?: { baseRef?: string },
+    options?: { baseRef?: string; completion?: ReviewCompletion; selection?: ReviewSelection },
 ): Promise<string> {
-    if (output === 'json') return renderJsonReview(issues, durationSecs, files);
-    if (output === 'sarif') return renderSarifReview(issues, durationSecs, files);
-    if (output === 'diff') return renderDiffReview(issues, durationSecs, files);
+    if (output === 'json') return renderJsonReview(issues, durationSecs, files, options?.completion);
+    if (output === 'sarif') return renderSarifReview(issues, durationSecs, files, options?.completion);
+    if (options?.completion && !options.completion.complete) {
+        const { failedFiles, skippedFiles } = options.completion;
+        return `AI Code Review — Incomplete\nFailed files: ${failedFiles.join(', ') || 'none'}\nSkipped files: ${skippedFiles.join(', ') || 'none'}\nFindings below are partial. Rerun the review.\n\n${issues.map(formatIssue).join('\n\n')}`;
+    }
+    if (output === 'diff') return renderDiffReview(issues, durationSecs, files, options?.selection);
     if (output === 'github') return buildGithubCommentBody(issues, files, durationSecs, options?.baseRef);
     return renderPlainReview(issues, durationSecs, files);
 }

@@ -1,7 +1,13 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vite-plus/test';
 import { parseSimpleYaml } from './repo-config.js';
 
 describe('parseSimpleYaml', () => {
+    test('empty inline lists from ai-review init remain arrays', () => {
+        const config = parseSimpleYaml('customRules: []\nignoredPaths: []\nguidelineFiles: []\n');
+        expect(config.customRules).toEqual([]);
+        expect(config.ignoredPaths).toEqual([]);
+        expect(config.guidelineFiles).toEqual([]);
+    });
     test('parses scalar and list review config values', () => {
         const config = parseSimpleYaml(`
 reviewProfile: assertive

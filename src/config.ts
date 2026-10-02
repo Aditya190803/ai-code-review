@@ -61,13 +61,17 @@ export function normalizeConfig(config?: Partial<AppConfig> | null): AppConfig {
     const providerDefinition = getProviderDefinition(provider);
     const fallbackApiKey = provider === fallback.provider ? fallback.apiKey : null;
     const apiKey = providerRequiresApiKey(provider)
-        ? (useSavedProviderValues ? config?.apiKey : undefined) ?? config?.keys?.[provider] ?? getProviderEnvKey(provider) ?? fallbackApiKey
+        ? ((useSavedProviderValues ? config?.apiKey : undefined) ??
+          config?.keys?.[provider] ??
+          getProviderEnvKey(provider) ??
+          fallbackApiKey)
         : null;
 
     return {
         provider,
         apiKey,
-        model: (useSavedProviderValues ? config?.model : undefined) || providerDefinition?.defaultModel || fallback.model,
+        model:
+            (useSavedProviderValues ? config?.model : undefined) || providerDefinition?.defaultModel || fallback.model,
         keys: config?.keys || {},
         authMode: config?.authMode || fallback.authMode,
         reviewLanguage: config?.reviewLanguage || fallback.reviewLanguage,
@@ -122,7 +126,7 @@ export async function saveConfig(config: AppConfig) {
 export async function fetchModels(
     provider: string,
     apiKey: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
 ): Promise<{ label: string; value: string }[]> {
     try {
         const definition = getProviderDefinition(provider);
@@ -131,7 +135,12 @@ export async function fetchModels(
             if (definition?.staticModels?.length) {
                 return definition.staticModels;
             }
-            return [{ label: definition?.defaultModel || 'default', value: definition?.defaultModel || 'default' }];
+            return [
+                {
+                    label: definition?.defaultModel || 'default',
+                    value: definition?.defaultModel || 'default',
+                },
+            ];
         }
 
         const fetchAndParse = async (url: string, headers: Record<string, string>) => {
@@ -151,13 +160,10 @@ export async function fetchModels(
             }
         };
 
-        const data = await fetchAndParse(
-            modelListURL,
-            definition.authHeaders?.(apiKey) || {}
-        );
+        const data = await fetchAndParse(modelListURL, definition.authHeaders?.(apiKey) || {});
         const response = data as Record<string, unknown>;
         const source = Array.isArray(response[definition.modelResponsePath])
-            ? response[definition.modelResponsePath] as Record<string, unknown>[]
+            ? (response[definition.modelResponsePath] as Record<string, unknown>[])
             : [];
 
         const models = source
@@ -191,7 +197,9 @@ export function getModel(config: AppConfig) {
 
     const definition = getProviderDefinition(normalized.provider);
     if (definition?.runtime && definition.runtime !== 'ai-sdk') {
-        throw new Error(`${definition.label} uses ${definition.runtime} and is not available as a Vercel AI SDK model.`);
+        throw new Error(
+            `${definition.label} uses ${definition.runtime} and is not available as a Vercel AI SDK model.`,
+        );
     }
 
     if (!normalized.apiKey) {
@@ -209,17 +217,16 @@ export function getModel(config: AppConfig) {
     if (normalized.provider === 'openai') {
         const openai = createOpenAICompatible({
             name: 'openai',
-            baseURL: getProviderBaseURL('openai', normalized.providerOptions?.openai?.baseURL) || 'https://api.openai.com/v1',
+            baseURL:
+                getProviderBaseURL('openai', normalized.providerOptions?.openai?.baseURL) ||
+                'https://api.openai.com/v1',
             headers: { Authorization: `Bearer ${normalized.apiKey}` },
         });
         return openai(normalized.model || getProviderDefinition('openai')?.defaultModel || 'gpt-6-astra');
     }
 
     const providerDefinition = getProviderDefinition(normalized.provider);
-    const baseURL = getProviderBaseURL(
-        normalized.provider,
-        normalized.providerOptions?.[normalized.provider]?.baseURL,
-    );
+    const baseURL = getProviderBaseURL(normalized.provider, normalized.providerOptions?.[normalized.provider]?.baseURL);
 
     if (!baseURL) {
         throw new Error(`Provider "${normalized.provider}" does not have a base URL configured.`);
@@ -237,10 +244,18 @@ export function getModel(config: AppConfig) {
  * Perform a lightweight "ping" to validate the API key and model selection.
  */
 export async function validateApiKey(config: AppConfig): Promise<boolean> {
+    return (await checkProviderHealth(config)).ok;
+}
+
+export async function checkProviderHealth(config: AppConfig): Promise<{ ok: boolean; error?: string }> {
     try {
         const definition = getProviderDefinition(config.provider);
         if (definition?.runtime && definition.runtime !== 'ai-sdk') {
-            return await validateExternalProvider(config);
+            const ok = await validateExternalProvider(config);
+            return {
+                ok,
+                error: ok ? undefined : 'Account authentication failed. Run the provider login command.',
+            };
         }
 
         const model = getModel(config);
@@ -251,10 +266,15 @@ export async function validateApiKey(config: AppConfig): Promise<boolean> {
             // Reasoning models spend this budget on reasoning before emitting
             // any visible text; too small a value makes a valid key look dead.
             maxOutputTokens: SHORT_REPLY_MAX_OUTPUT_TOKENS,
+            abortSignal: AbortSignal.timeout(30_000),
         });
-        return true;
+        return { ok: true };
     } catch (e) {
-        return false;
+        let error = e instanceof Error ? e.message : 'Provider request failed';
+        for (const key of [config.apiKey, ...Object.values(config.keys || {})]) {
+            if (key) error = error.replaceAll(key, '<REDACTED>');
+        }
+        return { ok: false, error: error.slice(0, 500) };
     }
 }
 
