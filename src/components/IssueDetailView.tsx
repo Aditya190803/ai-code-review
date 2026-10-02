@@ -99,11 +99,7 @@ export const IssueDetailView = ({
     }, [activeIndex]);
 
     useMouseWheel((direction) => {
-        setScrollOffset((prev) =>
-            direction === 'up'
-                ? Math.max(0, prev - 1)
-                : Math.min(maxScroll, prev + 1)
-        );
+        setScrollOffset((prev) => (direction === 'up' ? Math.max(0, prev - 1) : Math.min(maxScroll, prev + 1)));
     }, maxScroll > 0);
 
     useInput((input: string, key: Key) => {
@@ -163,16 +159,19 @@ export const IssueDetailView = ({
                 setCopied(true);
                 if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
                 copyTimerRef.current = setTimeout(() => setCopied(false), 2500);
-            } catch (_e) {
+            } catch {
                 // Fallback: try async write
-                clipboard.write(sanitize(textToCopy)).then(() => {
-                    setCopied(true);
-                    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-                    copyTimerRef.current = setTimeout(() => setCopied(false), 2500);
-                }).catch(() => {
-                    // If clipboard fails entirely, show the prompt so user can manually copy
-                    setCopied(false);
-                });
+                clipboard
+                    .write(sanitize(textToCopy))
+                    .then(() => {
+                        setCopied(true);
+                        if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+                        copyTimerRef.current = setTimeout(() => setCopied(false), 2500);
+                    })
+                    .catch(() => {
+                        // If clipboard fails entirely, show the prompt so user can manually copy
+                        setCopied(false);
+                    });
             }
         }
     });
@@ -183,20 +182,18 @@ export const IssueDetailView = ({
 
     // Visible content slice
     const visibleLines = contentLines.slice(scrollOffset, scrollOffset + viewportHeight);
-    const scrollPercent =
-        maxScroll > 0 ? Math.round((scrollOffset / maxScroll) * 100) : 100;
+    const scrollPercent = maxScroll > 0 ? Math.round((scrollOffset / maxScroll) * 100) : 100;
     const sidebarWidth = isNarrow
         ? Math.max(24, termCols - 4)
         : Math.max(30, Math.min(44, Math.floor(termCols * 0.26)));
     const sidebarPadding = 4;
     const sidebarInnerWidth = Math.max(18, sidebarWidth - sidebarPadding);
-    const sidebarVisibleCount = isNarrow ? Math.max(5, Math.min(8, Math.floor(termRows * 0.25))) : Math.max(8, viewportHeight - 2);
+    const sidebarVisibleCount = isNarrow
+        ? Math.max(5, Math.min(8, Math.floor(termRows * 0.25)))
+        : Math.max(8, viewportHeight - 2);
     const sidebarStartIndex = Math.max(
         0,
-        Math.min(
-            activeIndex - Math.floor(sidebarVisibleCount / 2),
-            Math.max(0, issues.length - sidebarVisibleCount)
-        )
+        Math.min(activeIndex - Math.floor(sidebarVisibleCount / 2), Math.max(0, issues.length - sidebarVisibleCount)),
     );
     const sidebarItems = issues.slice(sidebarStartIndex, sidebarStartIndex + sidebarVisibleCount);
     const activeSidebarIssue = issues[activeIndex];
@@ -204,8 +201,8 @@ export const IssueDetailView = ({
         ? activeSidebarIssue.severity === 'critical'
             ? '[C]'
             : activeSidebarIssue.severity === 'warning'
-                ? '[W]'
-                : '[I]'
+              ? '[W]'
+              : '[I]'
         : '[I]';
     const sidebarAvailableTitleWidth = Math.max(8, sidebarInnerWidth - 4 - activeSidebarPrefix.length);
     const activeSidebarTitleLength = activeSidebarIssue?.title.length || 0;
@@ -225,11 +222,8 @@ export const IssueDetailView = ({
     }, [maxSidebarTextOffset]);
 
     const formatSidebarLabel = (sidebarIssue: ScanIssue, isSelected: boolean) => {
-        const prefix = sidebarIssue.severity === 'critical'
-            ? '[C]'
-            : sidebarIssue.severity === 'warning'
-                ? '[W]'
-                : '[I]';
+        const prefix =
+            sidebarIssue.severity === 'critical' ? '[C]' : sidebarIssue.severity === 'warning' ? '[W]' : '[I]';
         const marker = isSelected ? '› ' : '  ';
         const titleWidth = Math.max(8, sidebarInnerWidth - marker.length - prefix.length - 1);
 
@@ -245,7 +239,7 @@ export const IssueDetailView = ({
         const endChar = hiddenRight ? '…' : '';
         const composedTitle = `${startChar}${paddedTitle.slice(
             0,
-            titleWidth - startChar.length - endChar.length
+            titleWidth - startChar.length - endChar.length,
         )}${endChar}`;
 
         return `${marker}${prefix} ${composedTitle}`.slice(0, sidebarInnerWidth);
@@ -262,7 +256,9 @@ export const IssueDetailView = ({
                     paddingY={1}
                     flexDirection="column"
                 >
-                    <Text color="white" bold>Issues</Text>
+                    <Text color="white" bold>
+                        Issues
+                    </Text>
                     <Box marginTop={1} flexDirection="column">
                         {sidebarItems.map((sidebarIssue, idx) => {
                             const issueIndex = sidebarStartIndex + idx;
@@ -284,14 +280,20 @@ export const IssueDetailView = ({
 
                 <Box flexDirection="column" marginLeft={isNarrow ? 0 : 1} marginTop={isNarrow ? 1 : 0} flexGrow={1}>
                     {/* Header */}
-                    <Box borderStyle="single" borderColor={sevColor} paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
+                    <Box
+                        borderStyle="single"
+                        borderColor={sevColor}
+                        paddingX={2}
+                        paddingY={1}
+                        flexDirection="column"
+                        alignItems="flex-start"
+                    >
                         <Text color={sevColor} bold>
                             {sevIcon} [{catIcon}] {issue.title}
                         </Text>
                         <Text color="whiteBright">
                             {issue.file} • Line {issue.line}
-                            {issue.lineEnd > issue.line ? `–${issue.lineEnd}` : ''} •{' '}
-                            {issue.severity.toUpperCase()}
+                            {issue.lineEnd > issue.line ? `–${issue.lineEnd}` : ''} • {issue.severity.toUpperCase()}
                         </Text>
                     </Box>
 
@@ -315,8 +317,8 @@ export const IssueDetailView = ({
                         <Box paddingX={1}>
                             <Text color="whiteBright">
                                 ─── {scrollPercent}% ── {scrollOffset + 1}–
-                                {Math.min(scrollOffset + viewportHeight, contentLines.length)} of{' '}
-                                {contentLines.length} lines ───
+                                {Math.min(scrollOffset + viewportHeight, contentLines.length)} of {contentLines.length}{' '}
+                                lines ───
                             </Text>
                         </Box>
                     )}

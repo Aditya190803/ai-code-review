@@ -71,44 +71,47 @@ export function SelectableList({
         });
     }, hasItems);
 
-    useInput((input, key) => {
-        if (!hasItems) {
-            return;
-        }
-
-        if (key.upArrow) {
-            if (!allowArrow('up')) return;
-            setSelectedIndex((prev) => wrapIndex(prev - 1));
-            return;
-        }
-        if (key.downArrow) {
-            if (!allowArrow('down')) return;
-            setSelectedIndex((prev) => wrapIndex(prev + 1));
-            return;
-        }
-        if (key.pageUp) {
-            setSelectedIndex((prev) => Math.max(0, prev - visibleLimit));
-            return;
-        }
-        if (key.pageDown) {
-            setSelectedIndex((prev) => Math.min(items.length - 1, prev + visibleLimit));
-            return;
-        }
-        if (key.home) {
-            setSelectedIndex(0);
-            return;
-        }
-        if (key.end) {
-            setSelectedIndex(Math.max(0, items.length - 1));
-            return;
-        }
-        if (key.return || input === ' ') {
-            const item = items[selectedIndex];
-            if (item) {
-                onSelect(item);
+    useInput(
+        (input, key) => {
+            if (!hasItems) {
+                return;
             }
-        }
-    }, { isActive: true });
+
+            if (key.upArrow) {
+                if (!allowArrow('up')) return;
+                setSelectedIndex((prev) => wrapIndex(prev - 1));
+                return;
+            }
+            if (key.downArrow) {
+                if (!allowArrow('down')) return;
+                setSelectedIndex((prev) => wrapIndex(prev + 1));
+                return;
+            }
+            if (key.pageUp) {
+                setSelectedIndex((prev) => Math.max(0, prev - visibleLimit));
+                return;
+            }
+            if (key.pageDown) {
+                setSelectedIndex((prev) => Math.min(items.length - 1, prev + visibleLimit));
+                return;
+            }
+            if (key.home) {
+                setSelectedIndex(0);
+                return;
+            }
+            if (key.end) {
+                setSelectedIndex(Math.max(0, items.length - 1));
+                return;
+            }
+            if (key.return || input === ' ') {
+                const item = items[selectedIndex];
+                if (item) {
+                    onSelect(item);
+                }
+            }
+        },
+        { isActive: true },
+    );
 
     const rowWidth = Math.max(cols - 2, 20);
     const visibleItems = items.slice(startIndex, startIndex + visibleLimit);

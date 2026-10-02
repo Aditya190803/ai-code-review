@@ -8,6 +8,8 @@ const mouseWheelListeners = new Set<(direction: MouseWheelDirection) => void>();
 export function extractMouseWheelArrowSequences(sequence: string): string[] {
     const arrows: string[] = [];
     if (typeof sequence !== 'string') return arrows;
+    // Terminal mouse reports are introduced by the ESC control character.
+    // eslint-disable-next-line no-control-regex
     const matches = sequence.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g);
 
     for (const match of matches) {
@@ -33,9 +35,7 @@ export function extractMouseWheelArrowSequences(sequence: string): string[] {
 }
 
 function extractMouseWheelDirections(sequence: string): MouseWheelDirection[] {
-    return extractMouseWheelArrowSequences(sequence).map((arrow) =>
-        arrow === '\u001b[A' ? 'up' : 'down'
-    );
+    return extractMouseWheelArrowSequences(sequence).map((arrow) => (arrow === '\u001b[A' ? 'up' : 'down'));
 }
 
 export function useMouseWheel(handler: (direction: MouseWheelDirection) => void, enabled = true) {
@@ -120,7 +120,9 @@ export function GlobalMouseHandler() {
             }
         };
 
-        try { process.stdout.write('\x1b[?1007h'); } catch (err) {
+        try {
+            process.stdout.write('\x1b[?1007h');
+        } catch (err) {
             console.error('Failed to enable alternate mouse mode:', err);
         }
         process.stdin.on('data', handleData);
@@ -195,7 +197,7 @@ export function FullScreenTerminal({ children }: { children: React.ReactNode }) 
         return () => {
             try {
                 process.stdout.write('\x1b[?1049l');
-            } catch (err) {
+            } catch {
                 // Ignore restore failures during shutdown.
             }
         };

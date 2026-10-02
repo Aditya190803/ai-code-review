@@ -15,11 +15,31 @@ export async function getASTContext(files: string[]): Promise<string> {
             try {
                 const sourceFile = tsProject.addSourceFileAtPath(file);
                 if (!sourceFile) continue;
-                const classes = sourceFile.getClasses().map((c): string | undefined => c.getName()).filter(Boolean).join(', ');
-                const interfaces = sourceFile.getInterfaces().map((i): string | undefined => i.getName()).filter(Boolean).join(', ');
-                const functions = sourceFile.getFunctions().map((f): string | undefined => f.getName()).filter(Boolean).map((n): string => n + '()').join(', ');
-                const imports = sourceFile.getImportDeclarations().map((i): string => i.getModuleSpecifierValue()).join(', ');
-                const exports = sourceFile.getExportDeclarations().map((e): string | undefined => e.getModuleSpecifierValue()).filter(Boolean).join(', ');
+                const classes = sourceFile
+                    .getClasses()
+                    .map((c): string | undefined => c.getName())
+                    .filter(Boolean)
+                    .join(', ');
+                const interfaces = sourceFile
+                    .getInterfaces()
+                    .map((i): string | undefined => i.getName())
+                    .filter(Boolean)
+                    .join(', ');
+                const functions = sourceFile
+                    .getFunctions()
+                    .map((f): string | undefined => f.getName())
+                    .filter(Boolean)
+                    .map((n): string => n + '()')
+                    .join(', ');
+                const imports = sourceFile
+                    .getImportDeclarations()
+                    .map((i): string => i.getModuleSpecifierValue())
+                    .join(', ');
+                const exports = sourceFile
+                    .getExportDeclarations()
+                    .map((e): string | undefined => e.getModuleSpecifierValue())
+                    .filter(Boolean)
+                    .join(', ');
 
                 deepContextStr.push(`\n--- file: ${file} (AST Analysis) ---`);
                 if (imports) deepContextStr.push(`Imports: ${imports}`);

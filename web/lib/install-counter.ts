@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 
 const DATA_DIR =
   process.env.INSTALL_COUNTER_DIR ??
-  (process.env.NODE_ENV === "production" ? join(tmpdir(), "ai-code-review") : join(process.cwd(), ".data"));
+  (process.env.NODE_ENV === "production"
+    ? join(tmpdir(), "ai-code-review")
+    : join(process.cwd(), ".data"));
 const COUNTER_FILE = join(DATA_DIR, "install-count.json");
 
 interface InstallCounterState {
@@ -19,7 +21,8 @@ async function readCounterState(): Promise<InstallCounterState> {
 
     return {
       count: typeof parsed.count === "number" ? parsed.count : 0,
-      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
+      updatedAt:
+        typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
     };
   } catch {
     return {

@@ -85,7 +85,8 @@ export const OnboardingWizard = ({
     });
     const providerValues = providers.map((candidate) => candidate.value);
 
-    const buildNextConfig = (overrides: Partial<AppConfig> = {}) => normalizeConfig({
+    const buildNextConfig = (overrides: Partial<AppConfig> = {}) =>
+        normalizeConfig({
             ...normalizedInitial,
             provider,
             apiKey: providerRequiresApiKey(provider) ? apiKey.trim() : null,
@@ -95,7 +96,7 @@ export const OnboardingWizard = ({
             uiLanguage,
             reviewTone,
             keys: {
-                ...(normalizedInitial.keys || {}),
+                ...normalizedInitial.keys,
                 ...(providerRequiresApiKey(provider) && apiKey.trim() ? { [provider]: apiKey.trim() } : {}),
             },
             ...overrides,
@@ -126,7 +127,10 @@ export const OnboardingWizard = ({
     };
 
     const getPreviousStep = (currentStep: WizardStep): WizardStep => {
-        if (activeFlow === 'settings' && ['auth_mode', 'review_language', 'ui_language', 'review_tone'].includes(currentStep)) {
+        if (
+            activeFlow === 'settings' &&
+            ['auth_mode', 'review_language', 'ui_language', 'review_tone'].includes(currentStep)
+        ) {
             return 'settings_home';
         }
         if (currentStep === 'provider') return 'auth_mode';
@@ -199,14 +203,16 @@ export const OnboardingWizard = ({
                 return;
             }
 
-            const nextModels = list.length > 0 ? list : [{ label: `Fallback model: ${fallbackModel}`, value: fallbackModel }];
+            const nextModels =
+                list.length > 0 ? list : [{ label: `Fallback model: ${fallbackModel}`, value: fallbackModel }];
             setModels(nextModels);
 
-            const preferredModel = nextModels.find((model) => model.value === selectedModel)?.value
-                || nextModels.find((model) => model.value === normalizedInitial.model)?.value
-                || nextModels.find((model) => model.value === fallbackModel)?.value
-                || nextModels[0]?.value
-                || fallbackModel;
+            const preferredModel =
+                nextModels.find((model) => model.value === selectedModel)?.value ||
+                nextModels.find((model) => model.value === normalizedInitial.model)?.value ||
+                nextModels.find((model) => model.value === fallbackModel)?.value ||
+                nextModels[0]?.value ||
+                fallbackModel;
 
             setSelectedModel(preferredModel);
         } catch (e) {
@@ -267,8 +273,17 @@ export const OnboardingWizard = ({
     if (step === 'settings_home') {
         return (
             <Box flexDirection="column" padding={1}>
-                <Box borderStyle="single" borderColor="blue" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
-                    <Text color="white" bold>Settings</Text>
+                <Box
+                    borderStyle="single"
+                    borderColor="blue"
+                    paddingX={2}
+                    paddingY={1}
+                    flexDirection="column"
+                    alignItems="flex-start"
+                >
+                    <Text color="white" bold>
+                        Settings
+                    </Text>
                     <Text color="gray">
                         Change one thing and return. Current: {providerDefinition?.label || provider} / {selectedModel}
                     </Text>
@@ -309,7 +324,14 @@ export const OnboardingWizard = ({
     if (step === 'auth_mode') {
         return (
             <Box flexDirection="column" padding={1}>
-                <Box borderStyle="single" borderColor="blue" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
+                <Box
+                    borderStyle="single"
+                    borderColor="blue"
+                    paddingX={2}
+                    paddingY={1}
+                    flexDirection="column"
+                    alignItems="flex-start"
+                >
                     <Text color="white" bold>
                         AI Code Review Setup
                     </Text>
@@ -320,7 +342,10 @@ export const OnboardingWizard = ({
                     <Text>Select access type:</Text>
                     <SelectableList
                         items={AUTH_MODES}
-                        initialIndex={Math.max(AUTH_MODES.findIndex((mode) => mode.value === authMode), 0)}
+                        initialIndex={Math.max(
+                            AUTH_MODES.findIndex((mode) => mode.value === authMode),
+                            0,
+                        )}
                         onSelect={(item) => {
                             const nextAuthMode = item.value as 'api' | 'subscription';
                             setAuthMode(nextAuthMode);
@@ -336,7 +361,14 @@ export const OnboardingWizard = ({
     if (step === 'provider') {
         return (
             <Box flexDirection="column" padding={1}>
-                <Box borderStyle="single" borderColor="blue" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
+                <Box
+                    borderStyle="single"
+                    borderColor="blue"
+                    paddingX={2}
+                    paddingY={1}
+                    flexDirection="column"
+                    alignItems="flex-start"
+                >
                     <Text color="white" bold>
                         {authMode === 'subscription' ? 'Choose Subscription Provider' : 'Choose API Provider'}
                     </Text>
@@ -362,18 +394,29 @@ export const OnboardingWizard = ({
     if (step === 'subscription_unavailable') {
         return (
             <Box flexDirection="column" padding={1}>
-                <Box borderStyle="single" borderColor="yellow" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
+                <Box
+                    borderStyle="single"
+                    borderColor="yellow"
+                    paddingX={2}
+                    paddingY={1}
+                    flexDirection="column"
+                    alignItems="flex-start"
+                >
                     <Text color="yellow" bold>
                         Subscription Access Is Not Available Here
                     </Text>
                     <Text color="gray">
-                        {providerDefinition?.subscriptionNote || 'This provider requires API access for third-party CLI usage.'}
+                        {providerDefinition?.subscriptionNote ||
+                            'This provider requires API access for third-party CLI usage.'}
                     </Text>
                 </Box>
                 <Box marginTop={1} flexDirection="column">
                     <SelectableList
                         items={[
-                            { label: `Use ${providerDefinition?.label || provider} API key instead`, value: 'api' },
+                            {
+                                label: `Use ${providerDefinition?.label || provider} API key instead`,
+                                value: 'api',
+                            },
                             { label: 'Choose another subscription provider', value: 'provider' },
                         ]}
                         onSelect={(item) => {
@@ -397,14 +440,22 @@ export const OnboardingWizard = ({
     if (step === 'provider_key_choice') {
         return (
             <Box flexDirection="column" padding={1}>
-                <Box borderStyle="single" borderColor="blue" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
+                <Box
+                    borderStyle="single"
+                    borderColor="blue"
+                    paddingX={2}
+                    paddingY={1}
+                    flexDirection="column"
+                    alignItems="flex-start"
+                >
                     <Text color="white" bold>
                         Existing API Key Detected
                     </Text>
                 </Box>
                 <Box marginTop={1} flexDirection="column">
                     <Text color="green">
-                        A saved or environment API key for {providerDefinition?.label || provider.toUpperCase()} is available.
+                        A saved or environment API key for {providerDefinition?.label || provider.toUpperCase()} is
+                        available.
                     </Text>
                     <SelectableList
                         items={[
@@ -428,7 +479,14 @@ export const OnboardingWizard = ({
     if (step === 'api_key') {
         return (
             <Box flexDirection="column" padding={1}>
-                <Box borderStyle="single" borderColor="blue" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
+                <Box
+                    borderStyle="single"
+                    borderColor="blue"
+                    paddingX={2}
+                    paddingY={1}
+                    flexDirection="column"
+                    alignItems="flex-start"
+                >
                     <Text color="white" bold>
                         Enter API Key for {providerDefinition?.label || provider.toUpperCase()}
                     </Text>
@@ -475,19 +533,29 @@ export const OnboardingWizard = ({
     }
 
     if (step === 'model') {
-        const filteredModels = models.filter((model) =>
-            model.label.toLowerCase().includes(searchQuery.toLowerCase())
-                || model.value.toLowerCase().includes(searchQuery.toLowerCase())
+        const filteredModels = models.filter(
+            (model) =>
+                model.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                model.value.toLowerCase().includes(searchQuery.toLowerCase()),
         );
 
         return (
             <Box flexDirection="column" padding={1}>
-                <Box borderStyle="single" borderColor="blue" paddingX={2} paddingY={1} flexDirection="row" justifyContent="space-between">
+                <Box
+                    borderStyle="single"
+                    borderColor="blue"
+                    paddingX={2}
+                    paddingY={1}
+                    flexDirection="row"
+                    justifyContent="space-between"
+                >
                     <Text color="white" bold>
                         Select Model {isSearching && <Text color="yellow">[SEARCHING]</Text>}
                     </Text>
                     {!isSearching && (
-                        <Text color="gray" dimColor>(Ctrl+F to search, mouse wheel supported)</Text>
+                        <Text color="gray" dimColor>
+                            (Ctrl+F to search, mouse wheel supported)
+                        </Text>
                     )}
                 </Box>
 
@@ -505,15 +573,18 @@ export const OnboardingWizard = ({
                 <Box marginTop={1} flexDirection="column">
                     <Text>Choose the AI model you want to use:</Text>
 
-                {error && !isSearching && (
-                    <Box marginTop={1}>
-                        <Text color="red">{error}</Text>
-                    </Box>
-                )}
+                    {error && !isSearching && (
+                        <Box marginTop={1}>
+                            <Text color="red">{error}</Text>
+                        </Box>
+                    )}
                     {filteredModels.length > 0 ? (
                         <SelectableList
                             items={filteredModels}
-                            initialIndex={Math.max(filteredModels.findIndex((model) => model.value === selectedModel), 0)}
+                            initialIndex={Math.max(
+                                filteredModels.findIndex((model) => model.value === selectedModel),
+                                0,
+                            )}
                             limit={Math.max(rows - (isSearching ? 12 : 8), 5)}
                             onSelect={(item) => {
                                 setSelectedModel(item.value);
@@ -537,14 +608,29 @@ export const OnboardingWizard = ({
     if (step === 'review_language') {
         return (
             <Box flexDirection="column" padding={1}>
-                <Box borderStyle="single" borderColor="magenta" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
-                    <Text color="white" bold>Review Language</Text>
+                <Box
+                    borderStyle="single"
+                    borderColor="magenta"
+                    paddingX={2}
+                    paddingY={1}
+                    flexDirection="column"
+                    alignItems="flex-start"
+                >
+                    <Text color="white" bold>
+                        Review Language
+                    </Text>
                     <Text color="gray">The AI findings, fixes, and summaries will default to this language.</Text>
                 </Box>
                 <Box marginTop={1}>
                     <SelectableList
-                        items={SUPPORTED_LANGUAGES.map((language) => ({ label: language.label, value: language.value }))}
-                        initialIndex={Math.max(SUPPORTED_LANGUAGES.findIndex((language) => language.value === reviewLanguage), 0)}
+                        items={SUPPORTED_LANGUAGES.map((language) => ({
+                            label: language.label,
+                            value: language.value,
+                        }))}
+                        initialIndex={Math.max(
+                            SUPPORTED_LANGUAGES.findIndex((language) => language.value === reviewLanguage),
+                            0,
+                        )}
                         onSelect={(item) => {
                             if (activeFlow === 'settings') {
                                 saveReviewLanguage(item.value);
@@ -562,14 +648,31 @@ export const OnboardingWizard = ({
     if (step === 'ui_language') {
         return (
             <Box flexDirection="column" padding={1}>
-                <Box borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
-                    <Text color="white" bold>UI Language Preference</Text>
-                    <Text color="gray">This is stored now so the product can localize the interface as it expands.</Text>
+                <Box
+                    borderStyle="single"
+                    borderColor="cyan"
+                    paddingX={2}
+                    paddingY={1}
+                    flexDirection="column"
+                    alignItems="flex-start"
+                >
+                    <Text color="white" bold>
+                        UI Language Preference
+                    </Text>
+                    <Text color="gray">
+                        This is stored now so the product can localize the interface as it expands.
+                    </Text>
                 </Box>
                 <Box marginTop={1}>
                     <SelectableList
-                        items={SUPPORTED_LANGUAGES.map((language) => ({ label: language.label, value: language.value }))}
-                        initialIndex={Math.max(SUPPORTED_LANGUAGES.findIndex((language) => language.value === uiLanguage), 0)}
+                        items={SUPPORTED_LANGUAGES.map((language) => ({
+                            label: language.label,
+                            value: language.value,
+                        }))}
+                        initialIndex={Math.max(
+                            SUPPORTED_LANGUAGES.findIndex((language) => language.value === uiLanguage),
+                            0,
+                        )}
                         onSelect={(item) => {
                             if (activeFlow === 'settings') {
                                 saveUiLanguage(item.value);
@@ -587,14 +690,26 @@ export const OnboardingWizard = ({
     if (step === 'review_tone') {
         return (
             <Box flexDirection="column" padding={1}>
-                <Box borderStyle="single" borderColor="yellow" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
-                    <Text color="white" bold>Review Style</Text>
+                <Box
+                    borderStyle="single"
+                    borderColor="yellow"
+                    paddingX={2}
+                    paddingY={1}
+                    flexDirection="column"
+                    alignItems="flex-start"
+                >
+                    <Text color="white" bold>
+                        Review Style
+                    </Text>
                     <Text color="gray">Choose how strict the AI should sound and prioritize issues.</Text>
                 </Box>
                 <Box marginTop={1}>
                     <SelectableList
                         items={REVIEW_TONES}
-                        initialIndex={Math.max(REVIEW_TONES.findIndex((tone) => tone.value === reviewTone), 0)}
+                        initialIndex={Math.max(
+                            REVIEW_TONES.findIndex((tone) => tone.value === reviewTone),
+                            0,
+                        )}
                         onSelect={(item) => {
                             const nextTone = item.value as 'balanced' | 'strict';
                             if (activeFlow === 'settings') {
@@ -613,13 +728,20 @@ export const OnboardingWizard = ({
     return (
         <Box flexDirection="column" padding={1}>
             <Box borderStyle="double" borderColor="green" paddingX={2} paddingY={1} flexDirection="column">
-                <Text color="greenBright" bold>Ready to Save Configuration</Text>
+                <Text color="greenBright" bold>
+                    Ready to Save Configuration
+                </Text>
                 <Text color="white">Provider: {providerDefinition?.label || provider}</Text>
-                <Text color="white">Access: {authMode === 'subscription' ? 'Subscription / account plan' : 'API key / pay as you go'}</Text>
+                <Text color="white">
+                    Access: {authMode === 'subscription' ? 'Subscription / account plan' : 'API key / pay as you go'}
+                </Text>
                 <Text color="white">Model: {selectedModel}</Text>
                 <Text color="white">Review language: {getLanguageLabel(reviewLanguage)}</Text>
                 <Text color="white">UI language: {getLanguageLabel(uiLanguage)}</Text>
-                <Text color="white">Review tone: {reviewTone === 'strict' ? 'Strict production review' : 'Balanced team-friendly review'}</Text>
+                <Text color="white">
+                    Review tone:{' '}
+                    {reviewTone === 'strict' ? 'Strict production review' : 'Balanced team-friendly review'}
+                </Text>
             </Box>
             <Box marginTop={1}>
                 <SelectableList
