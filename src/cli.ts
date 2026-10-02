@@ -1,8 +1,18 @@
+import { globToRegExp } from './glob.js';
 import { spawnSync } from 'node:child_process';
 import * as fs from 'fs-extra';
-import { git, getBaseCodeFiles, getBaseCommitCodeFiles, getChangedCodeFiles, getCodeFiles, getCommittedCodeFiles, getStagedCodeFiles, getUnstagedCodeFiles } from './git.js';
+import {
+    git,
+    getBaseCodeFiles,
+    getBaseCommitCodeFiles,
+    getChangedCodeFiles,
+    getCodeFiles,
+    getCommittedCodeFiles,
+    getStagedCodeFiles,
+    getUnstagedCodeFiles,
+} from './git.js';
 import { getProviderDefinition, providerRequiresApiKey, PROVIDERS } from './providers.js';
-import { loadConfig, normalizeConfig, validateApiKey } from './config.js';
+import { checkProviderHealth, loadConfig, normalizeConfig } from './config.js';
 import { initRepoConfig, loadRepoConfig } from './repo-config.js';
 import { buildReviewContextBundle } from './review-context.js';
 import { writeLastReviewSnapshot } from './mcp-server.js';
@@ -23,6 +33,8 @@ export interface ParsedCli {
     scope: ReviewScope;
     base?: string;
     baseCommit?: string;
+    provider?: string;
+    model?: string;
     configPaths: string[];
     diffOutput: boolean;
     feedbackDown?: boolean;
@@ -49,10 +61,11 @@ function readFlagValue(args: string[], index: number): string | undefined {
 
 export function parseCliArgs(args: string[]): ParsedCli {
     const first = args[0];
-    const command = first && !first.startsWith('-') ? first : 'review';
+    const command =
+        args.includes('--help') || args.includes('-h') ? 'help' : first && !first.startsWith('-') ? first : 'review';
     const options = command === first ? args.slice(1) : args;
     const parsed: ParsedCli = {
-        command: command === 'ui' ? 'interactive' : command as ParsedCli['command'],
+        command: command === 'ui' ? 'interactive' : (command as ParsedCli['command']),
         subcommand: undefined,
         interactive: false,
         agent: false,
@@ -63,7 +76,7 @@ export function parseCliArgs(args: string[]): ParsedCli {
     };
 
     if (!['review', 'auth', 'doctor', 'init', 'help', 'interactive', 'feedback', 'mcp'].includes(parsed.command)) {
-        parsed.command = 'review';
+        throw new Error(`Unknown command: ${command}. Run ai-review help.`);
     }
 
     if (parsed.command === 'auth' && options[0] && !options[0].startsWith('-')) {
@@ -72,38 +85,65 @@ export function parseCliArgs(args: string[]): ParsedCli {
 
     for (let i = 0; i < options.length; i++) {
         const arg = options[i];
+        const valueFlags = [
+            '--provider',
+            '--model',
+            '--output',
+            '--output-file',
+            '--fail-on',
+            '--type',
+            '--base',
+            '--base-commit',
+            '--config',
+            '--file',
+            '--title',
+        ];
+        if (
+            arg.includes('=') &&
+            valueFlags.includes(arg.slice(0, arg.indexOf('='))) &&
+            !arg.slice(arg.indexOf('=') + 1)
+        ) {
+            throw new Error(`${arg.slice(0, arg.indexOf('='))} requires a value`);
+        }
+        if (valueFlags.includes(arg) && (!options[i + 1] || options[i + 1].startsWith('--'))) {
+            throw new Error(`${arg} requires a value`);
+        }
+        if (arg === '--provider' || arg === '--model') {
+            const key = arg.slice(2) as 'provider' | 'model';
+            parsed[key] = options[++i];
+            continue;
+        }
+        if (arg.startsWith('--provider=') || arg.startsWith('--model=')) {
+            const key = arg.slice(2, arg.indexOf('=')) as 'provider' | 'model';
+            parsed[key] = readFlagValue(options, i);
+            continue;
+        }
         if (arg === '--diff') {
             parsed.diffOutput = true;
             parsed.output = 'diff';
-        }
-        else if (arg === '--interactive') parsed.interactive = true;
+        } else if (arg === '--interactive') parsed.interactive = true;
         else if (arg === '--agent') parsed.agent = true;
         else if (arg === '--json') {
             parsed.json = true;
             parsed.output = 'json';
-        }
-        else if (arg === '--output') {
+        } else if (arg === '--output') {
             const value = options[i + 1] as ReviewOutput | undefined;
             if (value) parsed.output = value;
             i++;
-        }
-        else if (arg.startsWith('--output=')) {
+        } else if (arg.startsWith('--output=')) {
             parsed.output = readFlagValue(options, i) as ReviewOutput;
             if (parsed.output === 'json') parsed.json = true;
-        }
-        else if (arg === '--output-file') {
+        } else if (arg === '--output-file') {
             parsed.outputFile = options[i + 1];
             i++;
         } else if (arg.startsWith('--output-file=')) {
             parsed.outputFile = readFlagValue(options, i);
-        }
-        else if (arg === '--fail-on') {
+        } else if (arg === '--fail-on') {
             parsed.failOn = options[i + 1];
             i++;
         } else if (arg.startsWith('--fail-on=')) {
             parsed.failOn = readFlagValue(options, i);
-        }
-        else if (arg === '--all') parsed.scope = 'all';
+        } else if (arg === '--all') parsed.scope = 'all';
         else if (arg === '--staged') parsed.scope = 'staged';
         else if (arg === '--unstaged') parsed.scope = 'unstaged';
         else if (arg === '--uncommitted') parsed.scope = 'uncommitted';
@@ -129,23 +169,31 @@ export function parseCliArgs(args: string[]): ParsedCli {
         } else if (arg.startsWith('--config=')) {
             const value = readFlagValue(options, i);
             if (value) parsed.configPaths.push(value);
-        }
-        else if (arg === '--down') parsed.feedbackDown = true;
+        } else if (arg === '--down') parsed.feedbackDown = true;
         else if (arg === '--up') parsed.feedbackUp = true;
         else if (arg === '--file') {
             parsed.feedbackFile = options[i + 1];
             i++;
         } else if (arg.startsWith('--file=')) {
             parsed.feedbackFile = readFlagValue(options, i);
-        }
-        else if (arg === '--title') {
+        } else if (arg === '--title') {
             parsed.feedbackTitle = options[i + 1];
             i++;
         } else if (arg.startsWith('--title=')) {
             parsed.feedbackTitle = readFlagValue(options, i);
+        } else if (arg.startsWith('-') && !['--help', '-h', '--mode=tui'].includes(arg)) {
+            throw new Error(`Unknown option: ${arg}`);
         }
     }
 
+    if (!['all', 'staged', 'unstaged', 'uncommitted', 'committed'].includes(parsed.scope))
+        throw new Error(`Unknown review scope: ${parsed.scope}`);
+    if (parsed.output && !['plain', 'json', 'sarif', 'diff', 'github'].includes(parsed.output))
+        throw new Error(`Unknown output: ${parsed.output}`);
+    if (parsed.provider && !getProviderDefinition(parsed.provider))
+        throw new Error(`Unknown provider: ${parsed.provider}`);
+    if (parsed.failOn && !['critical', 'warning', 'info', 'none'].includes(parsed.failOn))
+        throw new Error(`Unknown failure threshold: ${parsed.failOn}`);
     return parsed;
 }
 
@@ -160,6 +208,7 @@ export function renderHelp(): string {
         '  ai-review review --output github --output-file review-comment.md',
         '  ai-review review --diff',
         '  ai-review review --fail-on critical|warning|info|none',
+        '  ai-review review --provider codex --model codex-default',
         '  ai-review feedback --down --file src/a.ts --title "issue title"',
         '  ai-review doctor',
         '  ai-review init',
@@ -190,22 +239,23 @@ function logAgentEvent(type: string, payload: Record<string, unknown>): void {
     console.log(JSON.stringify({ type, ...payload }));
 }
 
-function mergeRepoConfig(config: AppConfig, parsed: ParsedCli, repoConfigProvider?: string, repoConfigModel?: string): AppConfig {
+export function mergeRepoConfig(
+    config: AppConfig,
+    parsed: ParsedCli,
+    repoConfigProvider?: string,
+    repoConfigModel?: string,
+): AppConfig {
+    const provider = parsed.provider || repoConfigProvider || config.provider;
     return normalizeConfig({
         ...config,
-        provider: repoConfigProvider || config.provider,
-        model: process.env.AI_MODEL || repoConfigModel || config.model,
+        provider,
+        apiKey: provider === config.provider ? config.apiKey : undefined,
+        model:
+            parsed.model ||
+            process.env.AI_MODEL ||
+            (provider === repoConfigProvider ? repoConfigModel : undefined) ||
+            (provider === config.provider ? config.model : undefined),
     });
-}
-
-function globToRegExp(pattern: string): RegExp {
-    const escaped = pattern
-        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-        .replace(/\*\*/g, '::DOUBLE_STAR::')
-        .replace(/\*/g, '[^/]*')
-        .replace(/::DOUBLE_STAR::/g, '.*')
-        .replace(/\?/g, '.');
-    return new RegExp(`^${escaped}$`);
 }
 
 function filterIgnoredFiles(files: string[], repoConfig: RepoReviewConfig): string[] {
@@ -225,7 +275,7 @@ function resolveOutput(parsed: ParsedCli, repoConfig: RepoReviewConfig): ReviewO
     if (parsed.diffOutput) return 'diff';
     const output = parsed.output || repoConfig.output || 'plain';
     const allowed: ReviewOutput[] = ['plain', 'json', 'sarif', 'diff', 'github'];
-    return allowed.includes(output as ReviewOutput) ? output as ReviewOutput : 'plain';
+    return allowed.includes(output as ReviewOutput) ? (output as ReviewOutput) : 'plain';
 }
 
 async function writeOrPrintReport(parsed: ParsedCli, report: string): Promise<void> {
@@ -245,11 +295,21 @@ export async function runReviewCommand(parsed: ParsedCli): Promise<number> {
     const output = resolveOutput(parsed, repoConfig);
 
     if (files.length === 0) {
-        const scopeHint = parsed.scope === 'all'
-            ? 'No code files found in the repository. Files may be excluded by .gitignore, .ai-reviewignore, or the file extension filter.'
-            : `No matching code files found for scope "${parsed.scope}". Try --type all to scan all project files including untracked ones.`;
+        await writeLastReviewSnapshot([], [], 0);
+        const scopeHint =
+            parsed.scope === 'all'
+                ? 'No code files found in the repository. Files may be excluded by .gitignore, .ai-reviewignore, or the file extension filter.'
+                : `No matching code files found for scope "${parsed.scope}". Try --type all to scan all project files including untracked ones.`;
         if (parsed.agent) {
-            logAgentEvent('complete', { files: 0, findings: 0, message: scopeHint });
+            logAgentEvent('complete', {
+                files: 0,
+                findings: 0,
+                complete: true,
+                issues: [],
+                failedFiles: [],
+                skippedFiles: [],
+                message: scopeHint,
+            });
         } else if (output === 'json' || output === 'sarif') {
             await writeOrPrintReport(parsed, await renderReview(output, [], 0, [], { baseRef: parsed.base }));
         } else {
@@ -269,15 +329,19 @@ export async function runReviewCommand(parsed: ParsedCli): Promise<number> {
     }
 
     if (parsed.agent) {
-        logAgentEvent('status', { message: 'validating_provider', provider: config.provider, model: config.model });
+        logAgentEvent('status', {
+            message: 'validating_provider',
+            provider: config.provider,
+            model: config.model,
+        });
     } else if (!parsed.outputFile && output === 'plain') {
         console.log(`Using ${config.provider}/${config.model}`);
         console.log(`Reviewing ${files.length} file(s)...`);
     }
 
-    const isValid = await validateApiKey(config);
-    if (!isValid) {
-        console.error('Invalid API key or model. Run `ai-review doctor` for diagnostics.');
+    const health = await checkProviderHealth(config);
+    if (!health.ok) {
+        console.error(`Provider validation failed: ${health.error || 'Unknown provider error'}`);
         console.error('  Verify your API key and that the model name is correct for the provider.');
         return 2;
     }
@@ -286,45 +350,75 @@ export async function runReviewCommand(parsed: ParsedCli): Promise<number> {
     const useMemory = repoConfig.reviewMemory !== false;
     const memoryStore = useMemory ? await loadReviewMemory() : { version: 1 as const, entries: [] };
 
-    const result = await scanCodebase(config, {
-        onProgress: (message) => {
-            if (!message) return;
-            if (parsed.agent) logAgentEvent('status', { message });
-            else if (output === 'plain') console.log(message);
+    const emittedFindings = new Set<string>();
+    const result = await scanCodebase(
+        config,
+        {
+            onProgress: (message) => {
+                if (!message) return;
+                if (parsed.agent) logAgentEvent('status', { message });
+                else if (output === 'plain') console.log(message);
+            },
+            onLog: (message) => {
+                if (parsed.agent) logAgentEvent('status', { message });
+                else if (output === 'plain') console.log(message);
+            },
+            onIssuesUpdate: (issues) => {
+                if (parsed.agent) {
+                    for (const issue of issues) {
+                        const key = JSON.stringify(issue);
+                        if (emittedFindings.has(key)) continue;
+                        emittedFindings.add(key);
+                        logAgentEvent('finding', { finding: issue });
+                    }
+                }
+            },
+            onReviewUpdate: () => {},
         },
-        onLog: (message) => {
-            if (parsed.agent) logAgentEvent('status', { message });
-            else if (output === 'plain') console.log(message);
-        },
-        onIssuesUpdate: (issues) => {
-            if (parsed.agent) {
-                for (const issue of issues) logAgentEvent('finding', { finding: issue });
-            }
-        },
-        onReviewUpdate: () => {},
-    }, files, undefined, reviewContext);
+        files,
+        undefined,
+        reviewContext,
+        { scope: parsed.scope, base: parsed.base, baseCommit: parsed.baseCommit },
+    );
 
     let issues = filterIssuesByThreshold(result.issues, repoConfig.severityThreshold);
     if (useMemory) {
         issues = filterSuppressedIssues(issues, memoryStore);
     }
 
-    await writeLastReviewSnapshot(issues, files, result.durationSecs);
+    await writeLastReviewSnapshot(issues, files, result.durationSecs, result);
 
     if (parsed.agent) {
         logAgentEvent('complete', {
             files: files.length,
             findings: issues.length,
             durationSecs: result.durationSecs,
+            complete: result.complete,
+            failedFiles: result.failedFiles,
+            skippedFiles: result.skippedFiles,
+            issues,
         });
     } else {
-        await writeOrPrintReport(parsed, await renderReview(output, issues, result.durationSecs, files, { baseRef: parsed.base }));
+        await writeOrPrintReport(
+            parsed,
+            await renderReview(output, issues, result.durationSecs, files, {
+                baseRef: parsed.base,
+                completion: result,
+                selection: { scope: parsed.scope, base: parsed.base, baseCommit: parsed.baseCommit },
+            }),
+        );
     }
 
+    if (!result.complete) return 2;
     const failOn = parsed.failOn || repoConfig.failOn || 'critical';
     if (failOn === 'none') return 0;
     const failRank = severityRank[failOn] || severityRank.critical;
     return issues.some((issue) => issueRank(issue) >= failRank) ? 1 : 0;
+}
+
+export async function loadReviewConfig(parsed: ParsedCli): Promise<AppConfig> {
+    const repoConfig = await loadRepoConfig(parsed.configPaths);
+    return mergeRepoConfig(await loadConfig(), parsed, repoConfig.provider, repoConfig.model);
 }
 
 function checkCommand(command: string): boolean {
@@ -332,15 +426,18 @@ function checkCommand(command: string): boolean {
     return result.status === 0;
 }
 
-export async function runDoctorCommand(): Promise<number> {
-    const config = await loadConfig();
+export async function runDoctorCommand(parsed: ParsedCli = parseCliArgs(['doctor'])): Promise<number> {
+    const repoConfig = await loadRepoConfig(parsed.configPaths);
+    const config = mergeRepoConfig(await loadConfig(), parsed, repoConfig.provider, repoConfig.model);
     const provider = getProviderDefinition(config.provider);
     let ok = true;
 
     console.log('AI Code Review doctor');
     console.log(`Provider: ${provider?.label || config.provider}`);
     console.log(`Model: ${config.model}`);
-    console.log(`API key: ${providerRequiresApiKey(config.provider) ? (config.apiKey ? 'configured' : 'missing') : 'not required'}`);
+    console.log(
+        `API key: ${providerRequiresApiKey(config.provider) ? (config.apiKey ? 'configured' : 'missing') : 'not required'}`,
+    );
 
     if (providerRequiresApiKey(config.provider) && !config.apiKey) ok = false;
 
@@ -358,9 +455,9 @@ export async function runDoctorCommand(): Promise<number> {
     }
 
     if (config.apiKey || !providerRequiresApiKey(config.provider)) {
-        const valid = await validateApiKey(config);
-        console.log(`Provider ping: ${valid ? 'ok' : 'failed'}`);
-        ok = ok && valid;
+        const health = await checkProviderHealth(config);
+        console.log(`Provider ping: ${health.ok ? 'ok' : `failed — ${health.error}`}`);
+        ok = ok && health.ok;
     }
 
     return ok ? 0 : 1;
@@ -413,7 +510,9 @@ export async function runAuthCommand(parsed: ParsedCli): Promise<number> {
     if (!parsed.subcommand || parsed.subcommand === 'status') {
         console.log(`Provider: ${config.provider}`);
         console.log(`Model: ${config.model}`);
-        console.log(`API key: ${providerRequiresApiKey(config.provider) ? (config.apiKey ? 'configured' : 'missing') : 'not required'}`);
+        console.log(
+            `API key: ${providerRequiresApiKey(config.provider) ? (config.apiKey ? 'configured' : 'missing') : 'not required'}`,
+        );
         return providerRequiresApiKey(config.provider) && !config.apiKey ? 1 : 0;
     }
 

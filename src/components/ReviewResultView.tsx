@@ -16,13 +16,7 @@ const COPY_TOAST_DURATION = 2000;
  * Full-screen view for the AI Review result.
  * Supports scrolling for long markdown reports.
  */
-export const ReviewResultView = ({
-    content,
-    onBack,
-}: {
-    content: string;
-    onBack: () => void;
-}) => {
+export const ReviewResultView = ({ content, onBack }: { content: string; onBack: () => void }) => {
     const { cols, rows } = useTerminalSize();
     const [scrollOffset, setScrollOffset] = useState(0);
     const [copied, setCopied] = useState(false);
@@ -38,18 +32,14 @@ export const ReviewResultView = ({
             reflowText: true,
         }) as never;
 
-        return String(marked.parse(content, { renderer })).trim();
+        return marked.parse(content, { renderer, async: false }).trim();
     }, [content, termWidth]);
 
     const lines = useMemo(() => renderedMarkdown.split('\n'), [renderedMarkdown]);
     const maxScroll = Math.max(0, lines.length - viewportHeight);
 
     useMouseWheel((direction) => {
-        setScrollOffset((prev) =>
-            direction === 'up'
-                ? Math.max(0, prev - 1)
-                : Math.min(maxScroll, prev + 1)
-        );
+        setScrollOffset((prev) => (direction === 'up' ? Math.max(0, prev - 1) : Math.min(maxScroll, prev + 1)));
     }, maxScroll > 0);
 
     useInput((input, key) => {
@@ -87,12 +77,15 @@ export const ReviewResultView = ({
 
         if (input === 'c' && !key.meta && !key.ctrl) {
             try {
-                clipboard.write(content).then(() => {
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), COPY_TOAST_DURATION);
-                }).catch(() => {
-                    // Ignore background write errors
-                });
+                clipboard
+                    .write(content)
+                    .then(() => {
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), COPY_TOAST_DURATION);
+                    })
+                    .catch(() => {
+                        // Ignore background write errors
+                    });
             } catch {
                 // Clipboard access failed - silently ignore or show error
             }
@@ -104,8 +97,17 @@ export const ReviewResultView = ({
 
     return (
         <Box flexDirection="column" padding={1}>
-            <Box borderStyle="single" borderColor="blue" paddingX={2} paddingY={1} flexDirection="column" alignItems="flex-start">
-                <Text color="white" bold>AI Code Review Report</Text>
+            <Box
+                borderStyle="single"
+                borderColor="blue"
+                paddingX={2}
+                paddingY={1}
+                flexDirection="column"
+                alignItems="flex-start"
+            >
+                <Text color="white" bold>
+                    AI Code Review Report
+                </Text>
             </Box>
 
             <Box flexDirection="column" paddingX={1} marginTop={1} minHeight={viewportHeight}>
@@ -117,17 +119,22 @@ export const ReviewResultView = ({
             {/* Scroll Indicator */}
             <Box paddingX={1} marginTop={1}>
                 <Text color="whiteBright">
-                    {scrollOffset > 0 ? '⏶' : ' '} {scrollPercent}% {scrollOffset < maxScroll ? '⏷' : ' '}
-                    {' '}─── {scrollOffset + 1}–{Math.min(scrollOffset + viewportHeight, lines.length)} of {lines.length} lines ───
+                    {scrollOffset > 0 ? '⏶' : ' '} {scrollPercent}% {scrollOffset < maxScroll ? '⏷' : ' '} ───{' '}
+                    {scrollOffset + 1}–{Math.min(scrollOffset + viewportHeight, lines.length)} of {lines.length} lines
+                    ───
                 </Text>
                 {scrollOffset < maxScroll && (
                     <Box marginLeft={2}>
-                        <Text color="yellow" bold>↓ More content below</Text>
+                        <Text color="yellow" bold>
+                            ↓ More content below
+                        </Text>
                     </Box>
                 )}
                 {scrollOffset > 0 && (
                     <Box marginLeft={2}>
-                        <Text color="yellow" bold>↑ Content above</Text>
+                        <Text color="yellow" bold>
+                            ↑ Content above
+                        </Text>
                     </Box>
                 )}
             </Box>

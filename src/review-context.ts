@@ -1,19 +1,10 @@
+import { globToRegExp } from './glob.js';
 import * as fs from 'fs-extra';
 import type { PathInstruction, RepoReviewConfig } from './types.js';
 
 const DEFAULT_INSTRUCTIONS_FILE = '.ai-review/path-instructions.json';
 const MAX_GUIDELINE_BYTES = 48_000;
 const MAX_PATH_INSTRUCTION_CHARS = 8_000;
-
-function globToRegExp(pattern: string): RegExp {
-    const escaped = pattern
-        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-        .replace(/\*\*/g, '::DOUBLE_STAR::')
-        .replace(/\*/g, '[^/]*')
-        .replace(/::DOUBLE_STAR::/g, '.*')
-        .replace(/\?/g, '.');
-    return new RegExp(`^${escaped}$`);
-}
 
 function pathMatches(filePath: string, pattern: string): boolean {
     const normalized = filePath.replace(/\\/g, '/');
@@ -42,7 +33,7 @@ export async function loadPathInstructionsFile(filePath = DEFAULT_INSTRUCTIONS_F
     if (!(await fs.pathExists(filePath))) return [];
 
     try {
-        const raw = await fs.readJson(filePath) as unknown;
+        const raw = (await fs.readJson(filePath)) as unknown;
         if (!Array.isArray(raw)) return [];
 
         return raw
@@ -90,10 +81,7 @@ export async function buildReviewContextBundle(repoConfig: RepoReviewConfig): Pr
     };
 }
 
-export function formatReviewContextForPrompt(
-    filePath: string,
-    bundle: ReviewContextBundle,
-): string {
+export function formatReviewContextForPrompt(filePath: string, bundle: ReviewContextBundle): string {
     const parts: string[] = [];
 
     if (bundle.customRules.length > 0) {

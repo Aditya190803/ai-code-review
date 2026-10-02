@@ -32,7 +32,7 @@ import {
 
 const TerminalDemo = dynamic(
   () => import("./components/TerminalDemo").then((mod) => mod.TerminalDemo),
-  { ssr: false }
+  { ssr: false },
 );
 
 /* ── Data ── */
@@ -52,8 +52,16 @@ const SUBSCRIPTION_PROVIDERS = [
 ];
 
 const REVIEW_LANGUAGES = [
-  "English", "Hindi", "Spanish", "French", "German",
-  "Japanese", "Chinese", "Portuguese", "Korean", "Russian",
+  "English",
+  "Hindi",
+  "Spanish",
+  "French",
+  "German",
+  "Japanese",
+  "Chinese",
+  "Portuguese",
+  "Korean",
+  "Russian",
 ];
 
 const PROGRAMMING_LANGUAGES = [
@@ -125,7 +133,14 @@ function LogoIcon({ className = "" }: { className?: string }) {
   return (
     <svg viewBox="0 0 512 512" className={className}>
       <defs>
-        <linearGradient id="logo-grad-main" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+        <linearGradient
+          id="logo-grad-main"
+          x1="0"
+          y1="0"
+          x2="512"
+          y2="512"
+          gradientUnits="userSpaceOnUse"
+        >
           <stop offset="0%" stopColor="#6366f1" />
           <stop offset="50%" stopColor="#8b5cf6" />
           <stop offset="100%" stopColor="#a78bfa" />
@@ -139,7 +154,15 @@ function LogoIcon({ className = "" }: { className?: string }) {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <line x1="320" y1="360" x2="420" y2="360" stroke="#a78bfa" strokeWidth="48" strokeLinecap="round" />
+      <line
+        x1="320"
+        y1="360"
+        x2="420"
+        y2="360"
+        stroke="#a78bfa"
+        strokeWidth="48"
+        strokeLinecap="round"
+      />
       <path
         d="M380 90 Q380 140 430 140 Q380 140 380 190 Q380 140 330 140 Q380 140 380 90 Z"
         fill="#8b5cf6"
@@ -243,19 +266,26 @@ function NavigationBar() {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500/10 border border-indigo-500/20 p-1.5">
             <LogoIcon className="h-full w-full" />
           </div>
-          <span className="text-sm font-semibold tracking-tight text-white">
-            AI Code Review
-          </span>
+          <span className="text-sm font-semibold tracking-tight text-white">AI Code Review</span>
         </div>
 
         <div className="flex items-center gap-1 text-sm">
-          <a href="#features" className="hidden md:inline-block rounded-lg px-3 py-2 text-zinc-400 transition-colors hover:text-white hover:bg-white/[0.04]">
+          <a
+            href="#features"
+            className="hidden md:inline-block rounded-lg px-3 py-2 text-zinc-400 transition-colors hover:text-white hover:bg-white/[0.04]"
+          >
             Features
           </a>
-          <a href="#how-it-works" className="hidden md:inline-block rounded-lg px-3 py-2 text-zinc-400 transition-colors hover:text-white hover:bg-white/[0.04]">
+          <a
+            href="#how-it-works"
+            className="hidden md:inline-block rounded-lg px-3 py-2 text-zinc-400 transition-colors hover:text-white hover:bg-white/[0.04]"
+          >
             How It Works
           </a>
-          <a href="#commands" className="hidden md:inline-block rounded-lg px-3 py-2 text-zinc-400 transition-colors hover:text-white hover:bg-white/[0.04]">
+          <a
+            href="#commands"
+            className="hidden md:inline-block rounded-lg px-3 py-2 text-zinc-400 transition-colors hover:text-white hover:bg-white/[0.04]"
+          >
             Commands
           </a>
           <a
@@ -296,11 +326,7 @@ function CopyCommand({ copied, onCopy }: { copied: boolean; onCopy: () => void }
           className="shrink-0 rounded-lg border border-white/[0.08] bg-white/[0.03] p-2 text-zinc-400 transition-all hover:border-indigo-500/30 hover:bg-indigo-500/10 hover:text-white active:scale-95 cursor-pointer"
           aria-label="Copy install command to clipboard"
         >
-          {copied ? (
-            <Check className="h-4 w-4 text-emerald-400" />
-          ) : (
-            <Copy className="h-4 w-4" />
-          )}
+          {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
         </button>
       </div>
     </div>
@@ -368,7 +394,10 @@ function HeroSection({ copied, onCopy }: { copied: boolean; onCopy: () => void }
         <br />
         <span
           className="bg-gradient-to-r from-indigo-400 via-violet-400 to-purple-400 bg-clip-text text-transparent"
-          style={{ backgroundSize: "200% 100%", animation: "gradient-shift 6s ease-in-out infinite" }}
+          style={{
+            backgroundSize: "200% 100%",
+            animation: "gradient-shift 6s ease-in-out infinite",
+          }}
         >
           Speed of Thought
         </span>
@@ -380,9 +409,8 @@ function HeroSection({ copied, onCopy }: { copied: boolean; onCopy: () => void }
         transition={{ duration: 0.7, delay: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
         className="mb-10 max-w-2xl text-base font-light leading-relaxed text-zinc-400 sm:text-lg"
       >
-        Catch bugs, optimize performance, and improve security directly in your
-        terminal. AI-powered reviews of your diffs, full scans, and PR summaries
-        — all before you commit.
+        Catch bugs, optimize performance, and improve security directly in your terminal. AI-powered
+        reviews of your diffs, full scans, and PR summaries — all before you commit.
       </motion.p>
 
       <motion.div
@@ -440,7 +468,9 @@ function FeatureCard({
       variants={fadeUp}
       className={`group rounded-2xl border border-white/[0.06] bg-white/[0.02] p-7 transition-all duration-300 hover:border-white/[0.12] hover:bg-white/[0.03] ${className}`}
     >
-      <div className={`mb-5 flex h-11 w-11 items-center justify-center rounded-xl ${iconColor.replace("text-", "bg-").replace("400", "500/10")}`}>
+      <div
+        className={`mb-5 flex h-11 w-11 items-center justify-center rounded-xl ${iconColor.replace("text-", "bg-").replace("400", "500/10")}`}
+      >
         <Icon className={`h-5 w-5 ${iconColor}`} />
       </div>
       <h3 className="mb-2.5 text-lg font-semibold text-white">{title}</h3>
@@ -482,7 +512,9 @@ function FeatureGrid() {
             <div>
               <div className="mb-2 flex items-center gap-2">
                 <KeyRound className="h-3 w-3 text-zinc-600" />
-                <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-600">API Key Providers</span>
+                <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-600">
+                  API Key Providers
+                </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {API_KEY_PROVIDERS.map((p) => (
@@ -503,7 +535,9 @@ function FeatureGrid() {
             <div>
               <div className="mb-2 flex items-center gap-2">
                 <CreditCard className="h-3 w-3 text-zinc-600" />
-                <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-600">Subscription / Account</span>
+                <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-600">
+                  Subscription / Account
+                </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {SUBSCRIPTION_PROVIDERS.map((p) => (
@@ -564,7 +598,9 @@ function FeatureGrid() {
               return (
                 <li key={mode.label} className="flex items-center gap-2.5 text-sm text-zinc-300">
                   <ModeIcon className="h-3.5 w-3.5 text-amber-400/70" />
-                  <span className="font-[family-name:var(--font-jetbrains)] text-xs">{mode.label}</span>
+                  <span className="font-[family-name:var(--font-jetbrains)] text-xs">
+                    {mode.label}
+                  </span>
                   {mode.note && <span className="text-zinc-600 text-xs">({mode.note})</span>}
                 </li>
               );
@@ -586,7 +622,9 @@ function FeatureGrid() {
                 className="rounded-md border border-white/[0.06] bg-white/[0.02] px-2 py-1 text-xs font-medium text-zinc-300"
               >
                 {lang.name}
-                <span className="ml-1 font-[family-name:var(--font-jetbrains)] text-[10px] text-zinc-600">{lang.ext}</span>
+                <span className="ml-1 font-[family-name:var(--font-jetbrains)] text-[10px] text-zinc-600">
+                  {lang.ext}
+                </span>
               </span>
             ))}
           </div>
@@ -853,9 +891,7 @@ function Footer() {
           <LogoIcon className="h-4 w-4 opacity-60" />
           <span className="font-medium">AI Code Review CLI</span>
         </div>
-        <div className="text-sm text-zinc-600">
-          MIT Licensed. Built with Bun & React.
-        </div>
+        <div className="text-sm text-zinc-600">MIT Licensed. Built with Bun & React.</div>
       </div>
     </footer>
   );

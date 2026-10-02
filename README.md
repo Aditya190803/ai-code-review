@@ -5,8 +5,8 @@ AI-powered code review in the terminal, built with React, Ink, Bun, and the Verc
 ## What It Does
 
 - Reviews staged and unstaged changes directly from git in plain, interactive, or agent JSON mode
-- Scans an entire repository with static analysis plus AI deep review
-- Builds a local project index on first run for cross-file review context
+- Scans an entire repository with heuristic static candidates verified by AI deep review
+- Indexes dependencies and callers, and includes bounded, numbered source excerpts from the selected Git snapshot
 - Refreshes the project index incrementally as files change
 - Caches file results to avoid rescanning unchanged files
 - Generates PR summaries from current diffs
@@ -69,13 +69,13 @@ Framework projects built on JavaScript and TypeScript are supported through the 
 ```bash
 git clone https://github.com/Aditya190803/ai-code-review.git
 cd ai-code-review
-bun install
+vp install
 ```
 
 ### Run The CLI
 
 ```bash
-bun dev -- review
+vp run dev -- review
 ```
 
 The default review command runs in plain terminal mode for staged/unstaged changes:
@@ -88,6 +88,7 @@ Useful modes:
 
 ```bash
 ai-review review --interactive
+ai-review review --provider codex --model codex-default
 ai-review review --agent
 ai-review review --type staged
 ai-review review --type all
@@ -104,7 +105,7 @@ ai-review auth status
 Build the production bundle:
 
 ```bash
-bun run build
+vp run build
 node dist/app.js
 ```
 
@@ -132,7 +133,7 @@ After setup, the Settings screen lets you change only the model, provider, langu
 
 Configuration is stored in `~/.ai-reviewer.json`.
 
-The CLI defaults to OpenCode with the `big-pickle` model. Set `OPENCODE_API_KEY` or `AI_CODE_REVIEW_API_KEY`, or run:
+This repository configures Codex with `codex-default` in `.ai-review.yaml`, using your existing `codex login`. Without repo configuration, the CLI defaults to OpenCode with the `big-pickle` model. Set `OPENCODE_API_KEY` or `AI_CODE_REVIEW_API_KEY`, or run:
 
 ```bash
 ai-review review --interactive
@@ -184,8 +185,68 @@ bun run web:build
 ## Development
 
 ```bash
-bun run lint
-bun test
+vp check
+vp test
+vp run build
+vp run web:lint
+vp run web:build
 ```
 
 Production notes live in [`docs/PRODUCTION.md`](./docs/PRODUCTION.md).
+
+## Review Reliability
+
+Staged reviews read the index; committed and base reviews read HEAD; unstaged and
+uncommitted reviews read the working tree. Uncommitted patches include both staged
+and unstaged changes. Full scans review complete files. Deleted files are reviewed
+against their original source and surviving callers. Test files and migrations are
+included unless you exclude them.
+
+Findings must have valid source line ranges. Diff reviews focus on changed lines.
+Regex matches are unverified hints, so console output, loose equality, and other
+patterns do not automatically become defects. Every nonempty review input gets a
+deep review; a low triage score no longer skips it.
+
+Caches include the selected source, diff, provider, model, review rules, prompt
+version, and project context. Failed or malformed responses are not cached as clean.
+Files over 50,000 characters are explicitly skipped and make the review incomplete.
+Related source excerpts are limited to 3,000 characters per file and six files.
+These limits are visible to the model; the reviewer does not promise exhaustive coverage.
+
+JSON reports and agent completion events include `complete`, `failedFiles`, and
+`skippedFiles`. SARIF marks unsuccessful invocations. Exit codes are `0` for a
+completed review below the failure threshold, `1` for findings at the threshold,
+and `2` for setup or incomplete review errors. `--fail-on none` still returns `2`
+for an incomplete review. The final agent `complete` event includes the filtered
+`issues` array and is authoritative; interim findings stream as they are detected.
+
+OpenCode may reject the free tier outside its own application with HTTP 403. Use
+Codex login or an API provider/model accessible to your account. `doctor` displays
+the provider's actual error with configured keys redacted. Provider/model flags
+override repo defaults without reusing another provider's key or model.
+
+## Agent Integration and Live Verification
+
+`ai-review mcp` starts a persistent MCP stdio server. IDE clients can initialize it,
+list tools, and call `ai_review_list_findings` to read the latest review and its
+completion status. Run it with the reviewed repository as the working directory.
+
+The built bundle requires Node 22+ and installed dependencies; the Claude Agent SDK
+stays external so its CLI assets resolve correctly. `.env` also loads under Node.
+
+```bash
+vp run build
+node dist/app.js doctor
+node dist/app.js review --type staged --output json
+vp run verify:live
+```
+
+`verify:live` creates and removes a temporary Git repository, reviews a clean
+transfer implementation, then checks that a staged receiver-debit bug is detected.
+It uses real model access and may consume billable tokens. Defaults are Codex and
+`codex-default`; override with `REVIEW_SMOKE_PROVIDER` and `REVIEW_SMOKE_MODEL`.
+Ordinary `vp test` runs locally without model access.
+
+For GitHub Actions, configure `AI_REVIEW_PROVIDER` and `AI_REVIEW_MODEL` repository
+variables and the provider's API key secret. CI uses the fetched `origin/<base>`
+reference and preserves review failures instead of silently succeeding.

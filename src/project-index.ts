@@ -5,7 +5,7 @@ import { Project as TsProject } from 'ts-morph';
 import type { IndexedFileEntry, ProjectIndex } from './types.js';
 
 const INDEX_FILE = '.ai-reviewer-project-index.json';
-const PROJECT_INDEX_VERSION = '2026-03-27';
+const PROJECT_INDEX_VERSION = '2026-10-02';
 const JS_LIKE_EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.cjs']);
 const TS_LIKE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts']);
 const JS_TS_EXTENSIONS = new Set([...JS_LIKE_EXTENSIONS, ...TS_LIKE_EXTENSIONS]);
@@ -80,23 +80,43 @@ function extractJsTsStructure(filePath: string, content: string): ParsedStructur
         const project = new TsProject({ useInMemoryFileSystem: true });
         const sourceFile = project.createSourceFile(filePath, content, { overwrite: true });
 
-        const imports = sourceFile.getImportDeclarations().map((declaration) => declaration.getModuleSpecifierValue());
+        const imports = unique([
+            ...sourceFile.getImportDeclarations().map((declaration) => declaration.getModuleSpecifierValue()),
+            ...sourceFile.getExportDeclarations().map((declaration) => declaration.getModuleSpecifierValue() || ''),
+        ]);
         const exports = Array.from(sourceFile.getExportedDeclarations().keys());
         const symbols = unique([
-            ...sourceFile.getFunctions().map((node) => node.getName()).filter(Boolean) as string[],
-            ...sourceFile.getClasses().map((node) => node.getName()).filter(Boolean) as string[],
-            ...sourceFile.getInterfaces().map((node) => node.getName()).filter(Boolean) as string[],
-            ...sourceFile.getEnums().map((node) => node.getName()).filter(Boolean) as string[],
-            ...sourceFile.getTypeAliases().map((node) => node.getName()).filter(Boolean) as string[],
-            ...sourceFile.getVariableStatements()
+            ...(sourceFile
+                .getFunctions()
+                .map((node) => node.getName())
+                .filter(Boolean) as string[]),
+            ...(sourceFile
+                .getClasses()
+                .map((node) => node.getName())
+                .filter(Boolean) as string[]),
+            ...(sourceFile
+                .getInterfaces()
+                .map((node) => node.getName())
+                .filter(Boolean) as string[]),
+            ...(sourceFile
+                .getEnums()
+                .map((node) => node.getName())
+                .filter(Boolean) as string[]),
+            ...(sourceFile
+                .getTypeAliases()
+                .map((node) => node.getName())
+                .filter(Boolean) as string[]),
+            ...sourceFile
+                .getVariableStatements()
                 .flatMap((statement) => statement.getDeclarations().map((declaration) => declaration.getName())),
         ]);
 
-        const summary = summarizeParts([
-            symbols.length > 0 ? `Symbols: ${symbols.slice(0, 6).join(', ')}` : '',
-            imports.length > 0 ? `Imports ${imports.slice(0, 4).join(', ')}` : '',
-            exports.length > 0 ? `Exports ${exports.slice(0, 4).join(', ')}` : '',
-        ]) || buildFallbackSummary(content, symbols, 'JS/TS module');
+        const summary =
+            summarizeParts([
+                symbols.length > 0 ? `Symbols: ${symbols.slice(0, 6).join(', ')}` : '',
+                imports.length > 0 ? `Imports ${imports.slice(0, 4).join(', ')}` : '',
+                exports.length > 0 ? `Exports ${exports.slice(0, 4).join(', ')}` : '',
+            ]) || buildFallbackSummary(content, symbols, 'JS/TS module');
 
         return { imports: unique(imports), exports: unique(exports), symbols, summary };
     } catch {
@@ -134,7 +154,10 @@ function extractJavaStructure(content: string): ParsedStructure {
     const imports = regexMatches(content, /^\s*import\s+([^;]+);/gm);
     const symbols = unique([
         ...regexMatches(content, /\b(?:class|interface|enum|record)\s+([A-Za-z_]\w*)/g),
-        ...regexMatches(content, /\b(?:public|protected|private)?\s*(?:static\s+)?(?:final\s+)?[\w<>\[\], ?]+\s+([A-Za-z_]\w*)\s*\(/g),
+        ...regexMatches(
+            content,
+            /\b(?:public|protected|private)?\s*(?:static\s+)?(?:final\s+)?[\w<>[\], ?]+\s+([A-Za-z_]\w*)\s*\(/g,
+        ),
     ]);
 
     return {
@@ -168,7 +191,10 @@ function extractCFamilyStructure(content: string): ParsedStructure {
     const imports = regexMatches(content, /^\s*#include\s+[<"]([^>"]+)[>"]/gm);
     const symbols = unique([
         ...regexMatches(content, /^\s*(?:typedef\s+)?(?:struct|class|enum)\s+([A-Za-z_]\w*)/gm),
-        ...regexMatches(content, /^\s*(?:static\s+|inline\s+|constexpr\s+|virtual\s+|extern\s+)*[\w:<>~*&\s]+\s+([A-Za-z_]\w*)\s*\([^;{]*\)\s*\{/gm),
+        ...regexMatches(
+            content,
+            /^\s*(?:static\s+|inline\s+|constexpr\s+|virtual\s+|extern\s+)*[\w:<>~*&\s]+\s+([A-Za-z_]\w*)\s*\([^;{]*\)\s*\{/gm,
+        ),
     ]);
 
     return {
@@ -214,13 +240,37 @@ function extractStructure(filePath: string, content: string): ParsedStructure {
 function resolveCandidatePaths(baseFile: string, specifier: string): string[] {
     const baseDir = path.posix.dirname(baseFile);
     const normalized = path.posix.normalize(path.posix.join(baseDir, specifier));
-    const candidates = [normalized];
+    const sourceExtensions: Record<string, string[]> = {
+        '.js': ['.ts', '.tsx'],
+        '.jsx': ['.tsx'],
+        '.mjs': ['.mts'],
+        '.cjs': ['.cts'],
+    };
+    const importExtension = path.posix.extname(normalized);
+    const sourceCandidates = (sourceExtensions[importExtension] || []).map(
+        (ext) => normalized.slice(0, -importExtension.length) + ext,
+    );
+    const candidates = [...sourceCandidates, normalized];
     const extensions = [
-        '.ts', '.tsx', '.mts', '.cts',
-        '.js', '.jsx', '.mjs', '.cjs',
-        '.go', '.java', '.rs',
-        '.c', '.cc', '.cpp', '.cxx',
-        '.h', '.hh', '.hpp', '.hxx',
+        '.ts',
+        '.tsx',
+        '.mts',
+        '.cts',
+        '.js',
+        '.jsx',
+        '.mjs',
+        '.cjs',
+        '.go',
+        '.java',
+        '.rs',
+        '.c',
+        '.cc',
+        '.cpp',
+        '.cxx',
+        '.h',
+        '.hh',
+        '.hpp',
+        '.hxx',
     ];
 
     if (!path.posix.extname(normalized)) {
@@ -257,7 +307,7 @@ function deriveLocalDependencies(filePath: string, imports: string[], knownFiles
 
 async function loadExistingIndex(): Promise<ProjectIndex | null> {
     try {
-        const index = await fs.readJson(INDEX_FILE) as ProjectIndex;
+        const index = (await fs.readJson(INDEX_FILE)) as ProjectIndex;
         if (index.version !== PROJECT_INDEX_VERSION || !index.files) {
             return null;
         }
@@ -267,7 +317,11 @@ async function loadExistingIndex(): Promise<ProjectIndex | null> {
     }
 }
 
-async function buildOrRefreshIndex(files: string[], callbacks: IndexCallbacks = {}): Promise<ProjectIndex> {
+async function buildOrRefreshIndex(
+    files: string[],
+    callbacks: IndexCallbacks = {},
+    readSource?: (file: string) => Promise<string>,
+): Promise<ProjectIndex> {
     const normalizedFiles = [...new Set(files)].sort();
     const knownFiles = new Set(normalizedFiles);
     const existing = await loadExistingIndex();
@@ -276,7 +330,7 @@ async function buildOrRefreshIndex(files: string[], callbacks: IndexCallbacks = 
 
     for (const file of normalizedFiles) {
         try {
-            const content = await fs.readFile(file, 'utf-8');
+            const content = readSource ? await readSource(file) : await fs.readFile(file, 'utf-8');
             const hash = hashText(content);
             const existingEntry = existing?.files[file];
 
@@ -338,13 +392,18 @@ async function buildOrRefreshIndex(files: string[], callbacks: IndexCallbacks = 
         files: nextFiles,
     };
 
-    await fs.writeJson(INDEX_FILE, index, { spaces: 2 });
+    if (!readSource) await fs.writeJson(INDEX_FILE, index, { spaces: 2 });
     callbacks.onProgress?.('');
     return index;
 }
 
-export async function ensureProjectIndex(files: string[], callbacks: IndexCallbacks = {}): Promise<ProjectIndex> {
-    const buildKey = [...new Set(files)].sort().join('\u0000');
+export async function ensureProjectIndex(
+    files: string[],
+    callbacks: IndexCallbacks = {},
+    readSource?: (file: string) => Promise<string>,
+): Promise<ProjectIndex> {
+    if (readSource) return buildOrRefreshIndex(files, callbacks, readSource);
+    const buildKey = process.cwd() + '\u0000' + [...new Set(files)].sort().join('\u0000');
     const activeBuild = activeIndexBuilds.get(buildKey);
     if (activeBuild) {
         return activeBuild;
@@ -360,12 +419,19 @@ export async function ensureProjectIndex(files: string[], callbacks: IndexCallba
     return build;
 }
 
-function formatIndexedFile(entry: IndexedFileEntry): string {
+function formatIndexedFile(entry: IndexedFileEntry, source?: string): string {
     const parts = [
         `file: ${entry.path}`,
         `summary: ${entry.summary}`,
         entry.symbols.length > 0 ? `symbols: ${entry.symbols.slice(0, 8).join(', ')}` : '',
         entry.exports.length > 0 ? `exports: ${entry.exports.slice(0, 6).join(', ')}` : '',
+        source === undefined
+            ? ''
+            : `Source excerpt (line numbers; truncated when necessary):\n${source
+                  .slice(0, 3000)
+                  .split('\n')
+                  .map((line, i) => `${i + 1}: ${line}`)
+                  .join('\n')}${source.length > 3000 ? '\n[excerpt truncated]' : ''}`,
     ].filter(Boolean);
 
     return parts.join('\n');
@@ -374,7 +440,7 @@ function formatIndexedFile(entry: IndexedFileEntry): string {
 export function getProjectContext(
     index: ProjectIndex,
     filePath: string,
-    options?: { changedFiles?: string[]; limit?: number }
+    options?: { changedFiles?: string[]; limit?: number; sourceContents?: Map<string, string> },
 ): string {
     const entry = index.files[filePath];
     if (!entry) return '';
@@ -416,7 +482,7 @@ export function getProjectContext(
         .map(([relatedFile, meta]) => {
             const relatedEntry = index.files[relatedFile];
             if (!relatedEntry) return '';
-            return `reason: ${meta.reason}\n${formatIndexedFile(relatedEntry)}`;
+            return `reason: ${meta.reason}\n${formatIndexedFile(relatedEntry, options?.sourceContents?.get(relatedFile))}`;
         })
         .filter(Boolean);
 

@@ -31,7 +31,7 @@ export function issueFingerprint(issue: ScanIssue): string {
 
 export async function loadReviewMemory(file = MEMORY_FILE): Promise<ReviewMemoryStore> {
     try {
-        const data = await fs.readJson(file) as ReviewMemoryStore;
+        const data = (await fs.readJson(file)) as ReviewMemoryStore;
         if (data?.version === 1 && Array.isArray(data.entries)) return data;
     } catch {
         // fresh store
@@ -40,16 +40,12 @@ export async function loadReviewMemory(file = MEMORY_FILE): Promise<ReviewMemory
 }
 
 export async function saveReviewMemory(store: ReviewMemoryStore, file = MEMORY_FILE): Promise<void> {
-    store.entries = store.entries
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, MAX_ENTRIES);
+    store.entries = store.entries.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_ENTRIES);
     await fs.writeJson(file, store, { spaces: 2 });
 }
 
 export function filterSuppressedIssues(issues: ScanIssue[], store: ReviewMemoryStore): ScanIssue[] {
-    const suppressed = new Set(
-        store.entries.filter((e) => e.suppressed).map((e) => e.fingerprint),
-    );
+    const suppressed = new Set(store.entries.filter((e) => e.suppressed).map((e) => e.fingerprint));
     return issues.filter((issue) => !suppressed.has(fingerprint(issue)));
 }
 

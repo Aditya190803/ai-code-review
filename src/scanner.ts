@@ -3,29 +3,39 @@ import { createHash } from 'crypto';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { getModel } from './config.js';
-import { getProviderMaxOutputTokens, SHORT_REPLY_MAX_OUTPUT_TOKENS } from './providers.js';
+import { getProviderMaxOutputTokens, getProviderBaseURL } from './providers.js';
 import { isExternalProvider, runExternalStructuredReview } from './provider-runtime.js';
-import { git, getCodeFiles } from './git.js';
+import { getReviewContent, getReviewInput, getCodeFiles, type ReviewInput } from './git.js';
 import { analyzeFileStatic } from './static-analysis.js';
-import { extractMeaningfulCode } from './ast.js';
 import { ensureProjectIndex, getProjectContext } from './project-index.js';
-import { getScanSystemPrompt, SCAN_PROMPT_VERSION, TRIAGE_SYSTEM_PROMPT } from './prompts.js';
+import { getScanSystemPrompt, SCAN_PROMPT_VERSION } from './prompts.js';
 import { formatReviewContextForPrompt, type ReviewContextBundle } from './review-context.js';
-import type { ScanIssue, AppConfig, ProjectIndex } from './types.js';
+import type { ScanIssue, AppConfig, ProjectIndex, ReviewSelection, ReviewCompletion } from './types.js';
 
 const IssueSchema = z.object({
-    issues: z.array(z.object({
-        category: z.enum(['bug', 'runtime', 'security', 'performance', 'style', 'antipattern', 'crossfile', 'test']),
-        severity: z.enum(['critical', 'warning', 'info']),
-        confidence: z.enum(['high', 'medium']),
-        title: z.string(),
-        line: z.number(),
-        lineEnd: z.number(),
-        codeContext: z.string(),
-        description: z.string(),
-        suggestedFix: z.string(),
-        aiPrompt: z.string(),
-    })),
+    issues: z.array(
+        z.object({
+            category: z.enum([
+                'bug',
+                'runtime',
+                'security',
+                'performance',
+                'style',
+                'antipattern',
+                'crossfile',
+                'test',
+            ]),
+            severity: z.enum(['critical', 'warning', 'info']),
+            confidence: z.enum(['high', 'medium']),
+            title: z.string(),
+            line: z.number().int().positive(),
+            lineEnd: z.number().int().positive(),
+            codeContext: z.string(),
+            description: z.string(),
+            suggestedFix: z.string(),
+            aiPrompt: z.string(),
+        }),
+    ),
 });
 
 function toError(error: unknown): Error {
@@ -49,7 +59,7 @@ async function withRetry<T>(
     fn: () => Promise<T>,
     maxRetries = 3,
     baseDelay = 1000,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
 ): Promise<T> {
     const createAbortError = () => {
         const error = new Error('The operation was aborted');
@@ -57,29 +67,30 @@ async function withRetry<T>(
         return error;
     };
 
-    const wait = (delayMs: number) => new Promise<void>((resolve, reject) => {
-        if (abortSignal?.aborted) {
-            reject(createAbortError());
-            return;
-        }
+    const wait = (delayMs: number) =>
+        new Promise<void>((resolve, reject) => {
+            if (abortSignal?.aborted) {
+                reject(createAbortError());
+                return;
+            }
 
-        const onAbort = () => {
-            cleanup();
-            reject(createAbortError());
-        };
+            const onAbort = () => {
+                cleanup();
+                reject(createAbortError());
+            };
 
-        const timeoutId = setTimeout(() => {
-            cleanup();
-            resolve();
-        }, delayMs);
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                resolve();
+            }, delayMs);
 
-        const cleanup = () => {
-            clearTimeout(timeoutId);
-            abortSignal?.removeEventListener('abort', onAbort);
-        };
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                abortSignal?.removeEventListener('abort', onAbort);
+            };
 
-        abortSignal?.addEventListener('abort', onAbort, { once: true });
-    });
+            abortSignal?.addEventListener('abort', onAbort, { once: true });
+        });
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
@@ -103,21 +114,7 @@ async function withRetry<T>(
 
 // ── Parse AI response into structured issues ──
 export function parseScanIssues(parsed: Record<string, unknown>, fileName: string): ScanIssue[] {
-    if (!parsed || !Array.isArray(parsed.issues)) return [];
-
-    return parsed.issues.map((item: Record<string, unknown>) => ({
-        category: typeof item.category === 'string' ? item.category : 'bug',
-        severity: typeof item.severity === 'string' ? item.severity : 'info',
-        confidence: typeof item.confidence === 'string' ? item.confidence : 'medium',
-        title: typeof item.title === 'string' ? item.title : 'Untitled issue',
-        line: typeof item.line === 'number' ? item.line : 0,
-        lineEnd: typeof item.lineEnd === 'number' ? item.lineEnd : (typeof item.line === 'number' ? item.line : 0),
-        codeContext: typeof item.codeContext === 'string' ? item.codeContext : '',
-        description: typeof item.description === 'string' ? item.description : '',
-        suggestedFix: typeof item.suggestedFix === 'string' ? item.suggestedFix : '',
-        aiPrompt: typeof item.aiPrompt === 'string' ? item.aiPrompt : '',
-        file: fileName,
-    }));
+    return IssueSchema.parse(parsed).issues.map((item) => ({ ...item, file: fileName }));
 }
 
 // ── Scan callbacks for reactive UI updates ──
@@ -129,7 +126,7 @@ export interface ScanCallbacks {
 }
 
 /**
- * Per-file budget covering the triage call plus the deep scan.
+ * Per-file budget covering the deep scan and bounded retries.
  *
  * This was 20s, which predates reasoning models. A reasoning model spends real
  * time on the reasoning trace before emitting any output, so a 20s ceiling
@@ -141,6 +138,8 @@ const EXTERNAL_TASK_TIMEOUT_MS = 180_000;
 
 // ── Maximum number of concurrent LLM calls by provider ──
 const PROVIDER_CONCURRENCY: Record<string, number> = {
+    codex: 2,
+    'claude-code': 2,
     opencode: 5,
     cerebras: 15,
     openai: 8,
@@ -153,10 +152,7 @@ const PROVIDER_CONCURRENCY: Record<string, number> = {
  * Run a batch of promises with limited concurrency.
  * This is the key performance improvement — scanning files in parallel.
  */
-async function runWithConcurrency<T>(
-    tasks: (() => Promise<T>)[],
-    concurrency: number
-): Promise<T[]> {
+async function runWithConcurrency<T>(tasks: (() => Promise<T>)[], concurrency: number): Promise<T[]> {
     const results: T[] = [];
     let index = 0;
 
@@ -185,25 +181,54 @@ function deduplicateIssues(issues: ScanIssue[]): ScanIssue[] {
     });
 }
 
+export function changedLinesInDiff(diff: string): Set<number> {
+    const changed = new Set<number>();
+    let lineNumber = 0;
+    let inHunk = false;
+    for (const line of diff.split('\n')) {
+        const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+        if (hunk) {
+            lineNumber = Number(hunk[1]);
+            inHunk = true;
+            // A pure deletion is anchored to the nearest surviving source line.
+            if (hunk[2] === '0') changed.add(Math.max(1, lineNumber));
+        } else if (line.startsWith('diff --git')) inHunk = false;
+        else if (inHunk && line.startsWith('+')) changed.add(lineNumber++);
+        else if (inHunk && line.startsWith(' ')) lineNumber++;
+    }
+    return changed;
+}
+
 /**
  * Full codebase scan with:
  * 1. Instant static analysis (Phase 1)
  * 2. Parallel LLM deep scan (Phase 2) with configurable concurrency
  */
-export interface ScanResult {
+export interface ScanResult extends ReviewCompletion {
     issues: ScanIssue[];
     durationSecs: number;
 }
 
-function computeScanCacheKey(config: AppConfig): string {
+function computeScanCacheKey(
+    config: AppConfig,
+    reviewContext?: ReviewContextBundle,
+    selection?: ReviewSelection,
+): string {
     return createHash('sha256')
-        .update(JSON.stringify({
-            provider: config.provider,
-            model: config.model,
-            reviewLanguage: config.reviewLanguage || 'en',
-            reviewTone: config.reviewTone || 'strict',
-            promptVersion: SCAN_PROMPT_VERSION,
-        }))
+        .update(
+            JSON.stringify({
+                provider: config.provider,
+                model: config.model,
+                reviewLanguage: config.reviewLanguage || 'en',
+                reviewTone: config.reviewTone || 'strict',
+                promptVersion: SCAN_PROMPT_VERSION,
+                pipelineVersion: 3,
+                providerOptions: config.providerOptions,
+                baseURL: getProviderBaseURL(config.provider),
+                reviewContext,
+                selection,
+            }),
+        )
         .digest('hex');
 }
 
@@ -221,14 +246,16 @@ interface ScanRuntime {
     callbacks: ScanCallbacks;
     filesToScan?: string[];
     abortSignal?: AbortSignal;
-    scannable: Array<{ file: string; content: string }>;
+    scannable: ReviewInput[];
     staticResults: ScanIssue[];
     cache: Record<string, CachedScanEntry>;
     scanCacheKey: string;
     projectIndex: ProjectIndex;
+    sourceContents: Map<string, string>;
     phase2Start: number;
     completedCount: number;
     allAiIssues: ScanIssue[];
+    failedFiles: string[];
 }
 
 interface FileTaskContext {
@@ -248,12 +275,15 @@ function renderScanProgress(completedCount: number, totalCount: number, phase2St
     return `Scanning: [${bar}] ${percentage}% (${completedCount}/${totalCount}) ETA: ${Math.ceil(remaining / 1000)}s`;
 }
 
-function buildFileTaskContext(runtime: ScanRuntime, file: string, content: string): FileTaskContext {
-    const hash = createHash('sha256').update(content).digest('hex');
+function buildFileTaskContext(runtime: ScanRuntime, file: string, content: string, diff?: string): FileTaskContext {
+    const hash = createHash('sha256').update(JSON.stringify({ content, diff })).digest('hex');
     const projectContext = getProjectContext(runtime.projectIndex, file, {
         changedFiles: runtime.filesToScan,
+        sourceContents: runtime.sourceContents,
     });
-    const currentContextHash = createHash('sha256').update(projectContext).digest('hex');
+    const currentContextHash = createHash('sha256')
+        .update(projectContext + runtime.projectIndex.revision)
+        .digest('hex');
 
     return {
         hash,
@@ -266,10 +296,12 @@ function buildFileTaskContext(runtime: ScanRuntime, file: string, content: strin
 function recordTaskProgress(runtime: ScanRuntime, file: string, issueCount: number, message: string): void {
     runtime.completedCount++;
     runtime.callbacks.onLog(message);
-    runtime.callbacks.onProgress(renderScanProgress(runtime.completedCount, runtime.scannable.length, runtime.phase2Start));
+    runtime.callbacks.onProgress(
+        renderScanProgress(runtime.completedCount, runtime.scannable.length, runtime.phase2Start),
+    );
 
     if (issueCount > 0) {
-        runtime.callbacks.onIssuesUpdate(deduplicateIssues([...runtime.staticResults, ...runtime.allAiIssues]));
+        runtime.callbacks.onIssuesUpdate(deduplicateIssues(runtime.allAiIssues));
     }
 }
 
@@ -291,12 +323,6 @@ function handleCacheHit(runtime: ScanRuntime, file: string, cached: CachedScanEn
     return cached.issues;
 }
 
-function handleTriagedSkip(runtime: ScanRuntime, file: string, context: FileTaskContext, score: number): ScanIssue[] {
-    recordTaskProgress(runtime, file, 0, `✅ Triage: \`${file}\` looks clean (score ${score}) - skipping deep scan`);
-    storeCacheEntry(runtime, file, context, []);
-    return [];
-}
-
 function handleDetectedIssues(runtime: ScanRuntime, file: string, issues: ScanIssue[]): ScanIssue[] {
     if (issues.length > 0) {
         runtime.allAiIssues.push(...issues);
@@ -309,74 +335,71 @@ function handleDetectedIssues(runtime: ScanRuntime, file: string, issues: ScanIs
 }
 
 function handleTaskFailure(runtime: ScanRuntime, file: string, error: unknown): ScanIssue[] {
+    runtime.failedFiles.push(file);
     const err = toError(error);
     const errMsg = err.message.slice(0, 100);
 
     if (err.name === 'AbortError') {
-        runtime.callbacks.onLog(`AI scan timeout for \`${file}\` (static results still valid)`);
+        runtime.callbacks.onLog(`AI scan interrupted for \`${file}\`; review is incomplete`);
     } else {
         runtime.callbacks.onLog(`AI error on \`${file}\`: ${errMsg}`);
     }
 
     runtime.completedCount++;
-    runtime.callbacks.onProgress(renderScanProgress(runtime.completedCount, runtime.scannable.length, runtime.phase2Start));
+    runtime.callbacks.onProgress(
+        renderScanProgress(runtime.completedCount, runtime.scannable.length, runtime.phase2Start),
+    );
     return [] as ScanIssue[];
 }
 
-async function triageFile(runtime: ScanRuntime, file: string, contentToSend: string, abortSignal?: AbortSignal): Promise<number | null> {
-    if (isExternalProvider(runtime.config)) {
-        return null;
-    }
-
-    try {
-        const { object: triage } = await generateObject({
-            model: getModel(runtime.config),
-            schema: z.object({ score: z.number().min(1).max(10) }),
-            instructions: TRIAGE_SYSTEM_PROMPT,
-            prompt: `File: ${file}\n\n${contentToSend}`,
-            // The visible answer is a few tokens, but a reasoning model burns
-            // this budget on reasoning first and returns nothing if it runs out.
-            maxOutputTokens: SHORT_REPLY_MAX_OUTPUT_TOKENS,
-            abortSignal,
-        });
-
-        return triage.score;
-    } catch {
-        return null;
-    }
-}
-
-async function runDeepScan(runtime: ScanRuntime, file: string, contentToSend: string, projectContext: string, abortSignal: AbortSignal): Promise<ScanIssue[]> {
+async function runDeepScan(
+    runtime: ScanRuntime,
+    file: string,
+    contentToSend: string,
+    projectContext: string,
+    abortSignal: AbortSignal,
+): Promise<ScanIssue[]> {
     const system = getScanSystemPrompt(runtime.config);
     const reviewModeInstruction = contentToSend.startsWith('diff --git ')
-        ? 'Review mode: git diff. Focus findings on added or modified lines. Only mention unchanged context when it directly proves a changed-line bug.'
+        ? 'Review mode: git diff. Focus findings on added, modified, or deleted code. For deleted files use original line numbers and prove the deletion breaks surviving callers. Only mention unchanged context when it directly proves a changed-line bug.'
         : 'Review mode: full file. Review the file contents for concrete issues.';
-    const teamContext = runtime.reviewContext
-        ? formatReviewContextForPrompt(file, runtime.reviewContext)
-        : '';
-    const prompt = `File: ${file}\n${reviewModeInstruction}\n\nProject context:\n${projectContext || 'No additional project context available.'}${teamContext ? `\n\nTeam and path context:\n${teamContext}` : ''}\n\nContents/Diff:\n\`\`\`\n${contentToSend}\n\`\`\``;
+    const teamContext = runtime.reviewContext ? formatReviewContextForPrompt(file, runtime.reviewContext) : '';
+    const candidates = runtime.staticResults
+        .filter((issue) => issue.file === file)
+        .map((issue) => ({ title: issue.title, line: issue.line, description: issue.description }));
+    const prompt = `File: ${file}\n${reviewModeInstruction}\n\nProject context:\n${projectContext || 'No additional project context available.'}${teamContext ? `\n\nTeam and path context:\n${teamContext}` : ''}\n\nUnverified static hints (regex matches; report only if source proves a concrete failure, omit style preferences):\n${JSON.stringify(candidates)}\n\nContents/Diff:\n\`\`\`\n${contentToSend}\n\`\`\``;
 
     if (isExternalProvider(runtime.config)) {
-        const parsed = await withRetry(async () => {
-            return await runExternalStructuredReview(runtime.config, system, prompt, abortSignal);
-        }, 3, 1000, abortSignal);
+        const parsed = await withRetry(
+            async () => {
+                return await runExternalStructuredReview(runtime.config, system, prompt, abortSignal);
+            },
+            3,
+            1000,
+            abortSignal,
+        );
 
         return parseScanIssues(parsed, file);
     }
 
-    const { object: parsed } = await withRetry(async () => {
-        return await generateObject({
-            model: getModel(runtime.config),
-            schema: IssueSchema,
-            instructions: system,
-            prompt,
-            // A full scan response is long, and on a reasoning model the
-            // reasoning trace is charged against the same budget. Undersizing
-            // this truncates the JSON mid-finding instead of failing loudly.
-            maxOutputTokens: getProviderMaxOutputTokens(runtime.config.provider),
-            abortSignal,
-        });
-    }, 3, 1000, abortSignal);
+    const { object: parsed } = await withRetry(
+        async () => {
+            return await generateObject({
+                model: getModel(runtime.config),
+                schema: IssueSchema,
+                instructions: system,
+                prompt,
+                // A full scan response is long, and on a reasoning model the
+                // reasoning trace is charged against the same budget. Undersizing
+                // this truncates the JSON mid-finding instead of failing loudly.
+                maxOutputTokens: getProviderMaxOutputTokens(runtime.config.provider),
+                abortSignal,
+            });
+        },
+        3,
+        1000,
+        abortSignal,
+    );
 
     return parseScanIssues(parsed, file);
 }
@@ -406,17 +429,26 @@ function createTaskAbortSignal(runtimeAbortSignal: AbortSignal | undefined, time
     };
 }
 
-function createFileTask(runtime: ScanRuntime, file: string, content: string): () => Promise<ScanIssue[]> {
+function createFileTask(
+    runtime: ScanRuntime,
+    file: string,
+    content: string,
+    diff?: string,
+    deleted?: boolean,
+): () => Promise<ScanIssue[]> {
     return async () => {
-        if (runtime.abortSignal?.aborted) return [];
+        if (runtime.abortSignal?.aborted) {
+            runtime.failedFiles.push(file);
+            return [];
+        }
 
         const { signal, cleanup } = createTaskAbortSignal(
             runtime.abortSignal,
-            isExternalProvider(runtime.config) ? EXTERNAL_TASK_TIMEOUT_MS : API_TASK_TIMEOUT_MS
+            isExternalProvider(runtime.config) ? EXTERNAL_TASK_TIMEOUT_MS : API_TASK_TIMEOUT_MS,
         );
 
         try {
-            const context = buildFileTaskContext(runtime, file, content);
+            const context = buildFileTaskContext(runtime, file, content, diff);
 
             if (
                 context.cached &&
@@ -427,26 +459,23 @@ function createFileTask(runtime: ScanRuntime, file: string, content: string): ()
                 return handleCacheHit(runtime, file, context.cached);
             }
 
-            let contentToSend = extractMeaningfulCode(file, content);
-            try {
-                const fileDiff = await git.diff([file]);
-                if (fileDiff && fileDiff.trim() !== '') {
-                    contentToSend = fileDiff;
-                }
-            } catch {
-                // Ignore diff errors and fall back to extracted code.
+            const contentToSend = diff || content;
+            let issues = await runDeepScan(runtime, file, contentToSend, context.projectContext, signal);
+            signal.throwIfAborted();
+            const lineCount = content.split('\n').length;
+            if (
+                issues.some(
+                    (issue) => issue.line > lineCount || issue.lineEnd > lineCount || issue.lineEnd < issue.line,
+                )
+            ) {
+                throw new Error('Provider returned a finding outside the source line range');
             }
-
-            const score = await triageFile(runtime, file, contentToSend, signal);
-            if (signal.aborted) {
-                return [];
+            if (diff && !deleted) {
+                const changedLines = changedLinesInDiff(diff);
+                issues = issues.filter((issue) =>
+                    [...changedLines].some((line) => line >= issue.line && line <= issue.lineEnd),
+                );
             }
-
-            if (typeof score === 'number' && score < 3) {
-                return handleTriagedSkip(runtime, file, context, score);
-            }
-
-            const issues = await runDeepScan(runtime, file, contentToSend, context.projectContext, signal);
             storeCacheEntry(runtime, file, context, issues);
             return handleDetectedIssues(runtime, file, issues);
         } catch (e) {
@@ -457,7 +486,12 @@ function createFileTask(runtime: ScanRuntime, file: string, content: string): ()
     };
 }
 
-function buildFinalReviewHeader(totalFiles: number, totalDurationSecs: number, finalIssuesCount: number, scannedFilesCount: number): string {
+function buildFinalReviewHeader(
+    totalFiles: number,
+    totalDurationSecs: number,
+    finalIssuesCount: number,
+    scannedFilesCount: number,
+): string {
     let finalHeader = `## Codebase Scan Report — Complete\n\n`;
     finalHeader += `- **Total files:** ${totalFiles} \n`;
     finalHeader += `- **Total time:** ${totalDurationSecs}s\n`;
@@ -470,20 +504,6 @@ function buildFinalReviewHeader(totalFiles: number, totalDurationSecs: number, f
     }
 
     return finalHeader;
-}
-
-async function loadCodeFileContents(codeFiles: string[]): Promise<Array<{ file: string; content: string }>> {
-    return Promise.all(
-        codeFiles.map(async (file) => {
-            try {
-                const content = await fs.readFile(file, 'utf-8');
-                return { file, content };
-            } catch (e) {
-                if ((e as any).code !== 'ENOENT') console.error('Error reading', file, e);
-                return { file, content: '' };
-            }
-        })
-    );
 }
 
 function runStaticScan(fileContents: Array<{ file: string; content: string }>): ScanIssue[] {
@@ -499,7 +519,10 @@ function runStaticScan(fileContents: Array<{ file: string; content: string }>): 
 
 async function loadScanCache(cacheFile: string): Promise<Record<string, CachedScanEntry>> {
     try {
-        return await fs.readJson(cacheFile);
+        const cache: unknown = await fs.readJson(cacheFile);
+        return cache && typeof cache === 'object' && !Array.isArray(cache)
+            ? (cache as Record<string, CachedScanEntry>)
+            : {};
     } catch (e: unknown) {
         if (e && (e as { code?: string }).code !== 'ENOENT') console.error('Cache read error', e);
         return {};
@@ -524,7 +547,8 @@ function createScanRuntime(params: {
     cache: Record<string, CachedScanEntry>;
     scanCacheKey: string;
     projectIndex: ProjectIndex;
-    scannable: Array<{ file: string; content: string }>;
+    sourceContents: Map<string, string>;
+    scannable: ReviewInput[];
 }): ScanRuntime {
     return {
         config: params.config,
@@ -537,9 +561,11 @@ function createScanRuntime(params: {
         cache: params.cache,
         scanCacheKey: params.scanCacheKey,
         projectIndex: params.projectIndex,
+        sourceContents: params.sourceContents,
         phase2Start: Date.now(),
         completedCount: 0,
         allAiIssues: [],
+        failedFiles: [],
     };
 }
 
@@ -549,52 +575,72 @@ export async function scanCodebase(
     filesToScan?: string[],
     abortSignal?: AbortSignal,
     reviewContext?: ReviewContextBundle,
+    selection: ReviewSelection = { scope: filesToScan ? 'uncommitted' : 'all' },
 ): Promise<ScanResult> {
     const scanStartTime = Date.now();
 
     callbacks.onProgress('Discovering files...');
-    const codeFiles = filesToScan || await getCodeFiles();
+    const codeFiles = filesToScan || (await getCodeFiles());
 
     if (codeFiles.length === 0) {
         callbacks.onLog('No code files found in the project to scan.');
         callbacks.onReviewUpdate('No code files found to scan.');
-        return { issues: [], durationSecs: 0 };
+        return {
+            issues: [],
+            durationSecs: 0,
+            complete: !abortSignal?.aborted,
+            failedFiles: [],
+            skippedFiles: [],
+        };
     }
 
     callbacks.onProgress(`Found ${codeFiles.length} code files. Running static analysis...`);
 
-    const fileContents = await loadCodeFileContents(codeFiles);
+    const failedFiles: string[] = [];
+    const fileContents: ReviewInput[] = [];
+    for (const file of codeFiles) {
+        try {
+            fileContents.push(await getReviewInput(file, selection));
+        } catch {
+            failedFiles.push(file);
+            callbacks.onLog(`Cannot read selected review snapshot for ${file}`);
+        }
+    }
     const staticResults = runStaticScan(fileContents);
 
     if (staticResults.length > 0) {
-        callbacks.onLog(
-            `⚡ Fast static scan complete: ${staticResults.length} issues`
-        );
-        callbacks.onIssuesUpdate([...staticResults]);
+        callbacks.onLog(`⚡ Static analysis: ${staticResults.length} candidate(s) for AI verification`);
     }
 
     const concurrency = Math.min(PROVIDER_CONCURRENCY[config.provider] || 5, 10);
 
-    callbacks.onReviewUpdate(
-        `## Live Codebase Scan\n\n` +
-        `**Running AI Scan on ${codeFiles.length} files...**`
-    );
+    callbacks.onReviewUpdate(`## Live Codebase Scan\n\n` + `**Running AI Scan on ${codeFiles.length} files...**`);
 
-    callbacks.onProgress(
-        `Scanning ${codeFiles.length} files...`
-    );
+    callbacks.onProgress(`Scanning ${codeFiles.length} files...`);
 
     const CACHE_FILE = '.ai-reviewer-cache.json';
-    const scanCacheKey = computeScanCacheKey(config);
+    const scanCacheKey = computeScanCacheKey(config, reviewContext, selection);
     const cache = await loadScanCache(CACHE_FILE);
 
     const scannable = fileContents.filter(
-        ({ content }) => content.trim().length > 0 && content.length <= 50000
+        ({ content, diff }) =>
+            (diff === undefined ? content.trim().length > 0 : Boolean(diff.trim())) && content.length <= 50000,
     );
-    const projectIndex = await ensureProjectIndex(codeFiles, {
-        onProgress: callbacks.onProgress,
-        onLog: callbacks.onLog,
-    });
+    const skippedFiles = fileContents.filter(({ content }) => content.length > 50000).map(({ file }) => file);
+    const sourceContents = new Map<string, string>();
+    const projectIndex = await ensureProjectIndex(
+        [...new Set([...(await getCodeFiles(selection)), ...codeFiles])],
+        {
+            onProgress: callbacks.onProgress,
+            onLog: callbacks.onLog,
+        },
+        async (file) => {
+            const deletedInput = fileContents.find((input) => input.file === file && input.deleted);
+            const source = deletedInput ? deletedInput.content : await getReviewContent(file, selection);
+            sourceContents.set(file, source);
+            return source;
+        },
+    );
 
     const runtime = createScanRuntime({
         config,
@@ -606,21 +652,36 @@ export async function scanCodebase(
         cache,
         scanCacheKey,
         projectIndex,
+        sourceContents,
         scannable,
     });
 
-    const tasks = scannable.map(({ file, content }) => createFileTask(runtime, file, content));
+    const tasks = scannable.map(({ file, content, diff, deleted }) =>
+        createFileTask(runtime, file, content, diff, deleted),
+    );
 
     await runWithConcurrency(tasks, concurrency);
 
     await saveScanCache(CACHE_FILE, cache);
 
-    const finalIssues = deduplicateIssues([...staticResults, ...runtime.allAiIssues]);
+    const finalIssues = deduplicateIssues(runtime.allAiIssues);
     callbacks.onIssuesUpdate(finalIssues);
     callbacks.onProgress('');
 
     const totalDurationSecs = parseFloat(((Date.now() - scanStartTime) / 1000).toFixed(1));
 
-    callbacks.onReviewUpdate(buildFinalReviewHeader(codeFiles.length, totalDurationSecs, finalIssues.length, scannable.length));
-    return { issues: finalIssues, durationSecs: totalDurationSecs };
+    failedFiles.push(...runtime.failedFiles);
+    const complete = !abortSignal?.aborted && failedFiles.length === 0 && skippedFiles.length === 0;
+    callbacks.onReviewUpdate(
+        complete
+            ? buildFinalReviewHeader(codeFiles.length, totalDurationSecs, finalIssues.length, scannable.length)
+            : `## Codebase Scan Report — Incomplete\n\n${failedFiles.length} failed file(s), ${skippedFiles.length} skipped file(s). Findings are partial; rerun the review.\n`,
+    );
+    return {
+        issues: finalIssues,
+        durationSecs: totalDurationSecs,
+        complete,
+        failedFiles,
+        skippedFiles,
+    };
 }

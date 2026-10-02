@@ -26,11 +26,17 @@ jobs:
 
       - name: Run review (base branch)
         env:
+          REVIEW_BASE: origin/${{ github.base_ref }}
+          REVIEW_PROVIDER: ${{ vars.AI_REVIEW_PROVIDER || 'opencode' }}
+          REVIEW_MODEL: ${{ vars.AI_REVIEW_MODEL || 'big-pickle' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           AI_CODE_REVIEW_API_KEY: ${{ secrets.AI_CODE_REVIEW_API_KEY }}
         run: |
-          BASE="${{ github.base_ref }}"
-          bun run dist/app.js review --base "$BASE" --output github --output-file review-comment.md --fail-on none || true
+          bun run dist/app.js review --base "$REVIEW_BASE" --provider "$REVIEW_PROVIDER" --model "$REVIEW_MODEL" --output github --output-file review-comment.md --fail-on none
 
       - name: Post PR comment
         if: always() && hashFiles('review-comment.md') != ''

@@ -38,7 +38,8 @@ export const PROVIDERS: ProviderDefinition[] = [
         runtime: 'ai-sdk',
         requiresApiKey: true,
         subscriptionSupported: true,
-        subscriptionNote: 'Use your OpenCode Zen account key. OpenCode exposes subscription/gateway access through its OpenAI-compatible Zen API.',
+        subscriptionNote:
+            'Use your OpenCode Zen account key. OpenCode exposes subscription/gateway access through its OpenAI-compatible Zen API.',
         staticModels: [{ label: 'big-pickle', value: 'big-pickle' }],
         baseURL: 'https://opencode.ai/zen/v1',
         baseUrlEnvKeys: ['OPENCODE_BASE_URL'],
@@ -60,7 +61,8 @@ export const PROVIDERS: ProviderDefinition[] = [
         runtime: 'codex-cli',
         requiresApiKey: false,
         subscriptionSupported: true,
-        subscriptionNote: 'Uses your official Codex CLI ChatGPT login. Run `codex login` if this provider is not authenticated.',
+        subscriptionNote:
+            'Uses your official Codex CLI ChatGPT login. Run `codex login` if this provider is not authenticated.',
         staticModels: [{ label: 'Codex CLI default model', value: 'codex-default' }],
         modelResponsePath: 'data',
         modelMapper: () => null,
@@ -88,7 +90,8 @@ export const PROVIDERS: ProviderDefinition[] = [
         runtime: 'ai-sdk',
         requiresApiKey: true,
         subscriptionSupported: false,
-        subscriptionNote: 'For Claude subscription/account access, choose Claude Code (Agent SDK). Anthropic here is the API key provider.',
+        subscriptionNote:
+            'For Claude subscription/account access, choose Claude Code (Agent SDK). Anthropic here is the API key provider.',
         modelListURL: 'https://api.anthropic.com/v1/models',
         authHeaders: (apiKey: string) => ({
             'x-api-key': apiKey,
@@ -127,16 +130,13 @@ export const PROVIDERS: ProviderDefinition[] = [
         runtime: 'ai-sdk',
         requiresApiKey: true,
         subscriptionSupported: false,
-        subscriptionNote: 'For ChatGPT Plus/Pro Codex access, choose OpenAI Codex (ChatGPT plan). OpenAI here is the API key provider.',
+        subscriptionNote:
+            'For ChatGPT Plus/Pro Codex access, choose OpenAI Codex (ChatGPT plan). OpenAI here is the API key provider.',
         baseURL: 'https://api.openai.com/v1',
         modelListURL: 'https://api.openai.com/v1/models',
         authHeaders: bearerAuth,
         modelResponsePath: 'data',
-        modelMapper: (model) => (
-            String(model.id || '').includes('gpt')
-                ? { label: model.id, value: model.id }
-                : null
-        ),
+        modelMapper: (model) => (String(model.id || '').includes('gpt') ? { label: model.id, value: model.id } : null),
     },
     {
         id: 'openrouter',
@@ -171,9 +171,10 @@ export const PROVIDERS: ProviderDefinition[] = [
     },
 ];
 
-export const PROVIDER_MAP = Object.fromEntries(
-    PROVIDERS.map((provider) => [provider.id, provider])
-) as Record<string, ProviderDefinition>;
+export const PROVIDER_MAP = Object.fromEntries(PROVIDERS.map((provider) => [provider.id, provider])) as Record<
+    string,
+    ProviderDefinition
+>;
 
 export function getProviderDefinition(providerId: string): ProviderDefinition | undefined {
     return PROVIDER_MAP[providerId];

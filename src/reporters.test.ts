@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { renderJsonReview, renderSarifReview } from './reporters.js';
+import { describe, expect, test } from 'vite-plus/test';
+import { renderJsonReview, renderSarifReview, renderReview } from './reporters.js';
 import type { ScanIssue } from './types.js';
 
 const issue: ScanIssue = {
@@ -16,6 +16,18 @@ const issue: ScanIssue = {
 };
 
 describe('reporters', () => {
+    test('incomplete reviews cannot look clean in any output mode', async () => {
+        const completion = { complete: false, failedFiles: ['src/app.ts'], skippedFiles: [] };
+        const json = JSON.parse(await renderReview('json', [], 1, ['src/app.ts'], { completion }));
+        expect(json.complete).toBe(false);
+        const sarif = JSON.parse(await renderReview('sarif', [], 1, ['src/app.ts'], { completion }));
+        expect(sarif.runs[0].invocations[0].executionSuccessful).toBe(false);
+        for (const mode of ['plain', 'diff', 'github'] as const) {
+            const report = await renderReview(mode, [], 1, ['src/app.ts'], { completion });
+            expect(report).toContain('Incomplete');
+            expect(report).not.toContain('No issues detected');
+        }
+    });
     test('renders final JSON output', () => {
         const parsed = JSON.parse(renderJsonReview([issue], 1.2, ['src/app.ts']));
 

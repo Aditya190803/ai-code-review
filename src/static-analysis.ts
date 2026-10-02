@@ -29,10 +29,8 @@ const STATIC_RULES: StaticRule[] = [
         category: 'security',
         severity: 'critical',
         title: 'Hardcoded secret/API key detected',
-        description:
-            'API keys, passwords, or tokens should never be hardcoded. Use environment variables instead.',
-        pattern:
-            /(?:api[_-]?key|secret|password|token|auth)\s*[:=]\s*['"`][A-Za-z0-9_\-]{16,}['"`]/i,
+        description: 'API keys, passwords, or tokens should never be hardcoded. Use environment variables instead.',
+        pattern: /(?:api[_-]?key|secret|password|token|auth)\s*[:=]\s*['"`][A-Za-z0-9_-]{16,}['"`]/i,
         suggestedFix: 'Move the secret to an environment variable: process.env.YOUR_SECRET',
     },
     {
@@ -82,8 +80,7 @@ const STATIC_RULES: StaticRule[] = [
         category: 'style',
         severity: 'info',
         title: 'TODO/FIXME/HACK comment found',
-        description:
-            'Unresolved TODO/FIXME/HACK comments indicate incomplete work. Resolve or track them.',
+        description: 'Unresolved TODO/FIXME/HACK comments indicate incomplete work. Resolve or track them.',
         pattern: /\/\/\s*(?:TODO|FIXME|HACK|XXX)\b/i,
         suggestedFix: 'Resolve the TODO or convert it to a tracked issue.',
     },
@@ -92,8 +89,7 @@ const STATIC_RULES: StaticRule[] = [
         category: 'bug',
         severity: 'warning',
         title: 'Empty catch block',
-        description:
-            'Swallowing errors silently makes debugging extremely difficult. At minimum log the error.',
+        description: 'Swallowing errors silently makes debugging extremely difficult. At minimum log the error.',
         pattern: /catch\s*\([^)]*\)\s*\{\s*\}/,
         extensions: JS_TS_EXTENSIONS,
         suggestedFix: 'Add error logging: catch (e) { console.error(e); }',
@@ -103,8 +99,7 @@ const STATIC_RULES: StaticRule[] = [
         category: 'bug',
         severity: 'warning',
         title: 'Loose equality (== or !=) used instead of strict',
-        description:
-            'Loose equality can cause unexpected type coercion. Use === and !== instead.',
+        description: 'Loose equality can cause unexpected type coercion. Use === and !== instead.',
         pattern: /[^=!<>]==[^=]|[^=!]!=[^=]/,
         extensions: JS_TS_EXTENSIONS,
         suggestedFix: 'Replace == with === and != with !==',
@@ -116,9 +111,9 @@ const STATIC_RULES: StaticRule[] = [
         category: 'performance',
         severity: 'warning',
         title: 'Synchronous file system operation',
-        description:
-            'Sync fs methods (readFileSync, writeFileSync, etc.) block the event loop. Use async versions.',
-        pattern: /\b(?:readFileSync|writeFileSync|appendFileSync|mkdirSync|readdirSync|statSync|existsSync|unlinkSync|copyFileSync|renameSync)\b/,
+        description: 'Sync fs methods (readFileSync, writeFileSync, etc.) block the event loop. Use async versions.',
+        pattern:
+            /\b(?:readFileSync|writeFileSync|appendFileSync|mkdirSync|readdirSync|statSync|existsSync|unlinkSync|copyFileSync|renameSync)\b/,
         extensions: JS_TS_EXTENSIONS,
         suggestedFix: 'Use the async version: readFile, writeFile, etc.',
     },
@@ -140,8 +135,7 @@ const STATIC_RULES: StaticRule[] = [
         category: 'antipattern',
         severity: 'info',
         title: 'Usage of "any" type',
-        description:
-            'Using "any" defeats the purpose of TypeScript. Use specific types or "unknown".',
+        description: 'Using "any" defeats the purpose of TypeScript. Use specific types or "unknown".',
         pattern: /:\s*any\b/,
         extensions: TS_LIKE_EXTENSIONS,
         suggestedFix: 'Replace "any" with a specific type or use "unknown" with type guards.',
@@ -169,7 +163,6 @@ const STATIC_RULES: StaticRule[] = [
         extensions: ['.py'],
         suggestedFix: 'Use except Exception: or catch specific exception types.',
     },
-
 ];
 
 /**
@@ -178,9 +171,7 @@ const STATIC_RULES: StaticRule[] = [
  */
 export function analyzeFileStatic(filePath: string, content: string): ScanIssue[] {
     const lastDotIndex = filePath.lastIndexOf('.');
-    const ext = lastDotIndex > 0 && lastDotIndex > filePath.lastIndexOf('/')
-        ? filePath.slice(lastDotIndex)
-        : '';
+    const ext = lastDotIndex > 0 && lastDotIndex > filePath.lastIndexOf('/') ? filePath.slice(lastDotIndex) : '';
     const lines = content.split('\n');
     const issues: ScanIssue[] = [];
     const seenRules = new Set<string>(); // only report each rule once per file for noise-reduction
@@ -252,7 +243,7 @@ export function analyzeFileStatic(filePath: string, content: string): ScanIssue[
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             const funcMatch = line.match(
-                /(?:function\s+(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(|(\w+)\s*\([^)]*\)\s*(?::\s*\w+)?\s*\{)/
+                /(?:function\s+(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(|(\w+)\s*\([^)]*\)\s*(?::\s*\w+)?\s*\{)/,
             );
             if (funcMatch && braceDepth === 0) {
                 funcName = funcMatch[1] || funcMatch[2] || funcMatch[3] || 'anonymous';

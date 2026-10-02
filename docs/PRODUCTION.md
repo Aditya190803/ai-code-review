@@ -28,8 +28,18 @@
 - `ai-review review --fail-on critical|warning|info|none` controls CI failure behavior.
 - `ai-review doctor` reports provider, git, and optional local tool status.
 
+## Review Pipeline
+
+- Selected snapshots supply both review source and cross-file excerpts.
+- Static patterns are candidates for AI verification, not confirmed findings.
+- Invalid output, provider failures, cancellations and oversized files produce incomplete reports.
+- Exit code 2 takes precedence over `--fail-on none` for incomplete runs.
+- MCP uses the official SDK and exposes fresh completion metadata with findings.
+- This repo uses Codex through the official CLI login; API providers remain configurable.
+- Local tests use Vite+; `verify:live` additionally checks clean and planted-bug fixtures against a real provider.
+
 ## Demo Surface
 
-- The repository includes a lightweight static demo/docs site under `site/`.
-- `bun run site:dev` serves the demo locally.
-- `bun run site:build` copies the static site into `dist/site` for deployment alongside the CLI build output.
+- The Next.js demo/docs site lives in `web/`.
+- `vp run web:dev` serves it locally.
+- `vp run web:lint` and `vp run web:build` validate it.

@@ -1,15 +1,20 @@
 import * as fs from 'fs-extra';
 import type { ScanIssue } from './types.js';
+import type { ReviewSelection } from './types.js';
+import { getReviewInput } from './git.js';
 
 const DEFAULT_CONTEXT = 3;
 
 export async function renderIssueWithDiffContext(
     issue: ScanIssue,
     contextLines = DEFAULT_CONTEXT,
+    selection?: ReviewSelection,
 ): Promise<string> {
     let lines: string[] = [];
     try {
-        const content = await fs.readFile(issue.file, 'utf-8');
+        const content = selection
+            ? (await getReviewInput(issue.file, selection)).content
+            : await fs.readFile(issue.file, 'utf-8');
         lines = content.split('\n');
     } catch {
         return formatIssueHeader(issue);
@@ -30,7 +35,9 @@ export async function renderIssueWithDiffContext(
         '',
         ...numbered,
         issue.suggestedFix ? `\nSuggested fix:\n${issue.suggestedFix}` : '',
-    ].filter(Boolean).join('\n');
+    ]
+        .filter(Boolean)
+        .join('\n');
 }
 
 function formatIssueHeader(issue: ScanIssue): string {
@@ -42,6 +49,7 @@ export async function renderDiffReview(
     issues: ScanIssue[],
     durationSecs: number,
     files: string[],
+    selection?: ReviewSelection,
 ): Promise<string> {
     const header = [
         `AI Code Review (${durationSecs}s) — ${issues.length} finding(s) across ${files.length} file(s)`,
@@ -49,7 +57,11 @@ export async function renderDiffReview(
     ].join('\n');
 
     const blocks = await Promise.all(
-        issues.map((issue, i) => renderIssueWithDiffContext(issue).then((body) => `--- Finding ${i + 1} ---\n${body}`)),
+        issues.map((issue, i) =>
+            renderIssueWithDiffContext(issue, DEFAULT_CONTEXT, selection).then(
+                (body) => `--- Finding ${i + 1} ---\n${body}`,
+            ),
+        ),
     );
 
     return header + blocks.join('\n\n');

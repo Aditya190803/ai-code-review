@@ -1,42 +1,29 @@
 {
   "name": "ai-code-review",
-  "module": "index.ts",
-  "type": "module",
   "private": true,
-  "packageManager": "pnpm@10.33.0",
   "bin": {
     "ai-review": "./dist/app.js"
   },
+  "type": "module",
+  "module": "index.ts",
   "scripts": {
     "dev": "bun run app.tsx",
-    "build": "bun build app.tsx --outdir=dist --target=node",
+    "build": "bun build app.tsx --outdir=dist --target=node --external @anthropic-ai/claude-agent-sdk",
     "lint": "vp lint && tsc --noEmit",
-    "test": "bun test",
+    "test": "vp test",
+    "verify:live": "bun run scripts/verify-live-review.ts",
     "web:dev": "bun run --cwd web dev",
     "web:build": "bun run --cwd web build",
     "web:start": "bun run --cwd web start",
     "web:lint": "bun run --cwd web lint",
     "prepare": "vp config"
   },
-  "engines": {
-    "node": ">=22"
-  },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "@types/fs-extra": "^11.0.4",
-    "@types/node": "^25.3.0",
-    "@types/react": "^19.3.0",
-    "vite": "catalog:",
-    "vite-plus": "catalog:"
-  },
-  "peerDependencies": {
-    "typescript": "^5.9.3"
-  },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.53",
     "@ai-sdk/google": "^4.0.69",
     "@ai-sdk/openai-compatible": "^3.0.48",
     "@anthropic-ai/claude-agent-sdk": "^0.3.269",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "ai": "^7.0.99",
     "clipboardy": "^5.3.0",
     "dotenv": "^17.3.1",
@@ -51,5 +38,20 @@
     "simple-git": "^3.32.2",
     "ts-morph": "^28.0.0",
     "zod": "^4.6.2"
-  }
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^25.3.0",
+    "@types/react": "^19.3.0",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.33.0"
 }

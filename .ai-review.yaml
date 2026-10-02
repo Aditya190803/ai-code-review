@@ -1,0 +1,15 @@
+# Uses the existing official Codex CLI login. Override with --provider / --model.
+provider: codex
+model: codex-default
+severityThreshold: info
+failOn: critical
+output: plain
+reviewMemory: true
+ignoredPaths:
+  - dist/**
+  - node_modules/**
+  - web/.next/**
+guidelineFiles:
+  - AGENTS.md
+  - CLAUDE.md
+  - .github/copilot-instructions.md

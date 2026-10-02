@@ -32,13 +32,13 @@ export function createInitialIssueListState(): IssueListState {
 
 export function getIssueListItems(
     issues: ScanIssue[],
-    state: Pick<IssueListState, 'filterQuery' | 'sortMode' | 'categoryFilter' | 'collapsed'>
+    state: Pick<IssueListState, 'filterQuery' | 'sortMode' | 'categoryFilter' | 'collapsed'>,
 ): { items: ListItem[]; categories: string[] } {
     let filteredIssues = issues;
     if (state.filterQuery) {
         const lower = state.filterQuery.toLowerCase();
         filteredIssues = filteredIssues.filter(
-            (issue) => issue.file.toLowerCase().includes(lower) || issue.title.toLowerCase().includes(lower)
+            (issue) => issue.file.toLowerCase().includes(lower) || issue.title.toLowerCase().includes(lower),
         );
     }
     if (state.categoryFilter) {
@@ -59,7 +59,7 @@ export function getIssueListItems(
 
     if (state.sortMode === 'severity') {
         const allIssues = [...filteredIssues].sort(
-            (a, b) => (severityWeight[b.severity] || 0) - (severityWeight[a.severity] || 0)
+            (a, b) => (severityWeight[b.severity] || 0) - (severityWeight[a.severity] || 0),
         );
         for (const issue of allIssues) {
             items.push({ type: 'issue', issue, file: issue.file });
@@ -70,7 +70,7 @@ export function getIssueListItems(
             items.push({ type: 'file', file, count: fileIssues.length, isCollapsed });
             if (!isCollapsed) {
                 const sortedFileIssues = [...fileIssues].sort(
-                    (a, b) => (severityWeight[b.severity] || 0) - (severityWeight[a.severity] || 0)
+                    (a, b) => (severityWeight[b.severity] || 0) - (severityWeight[a.severity] || 0),
                 );
                 for (const issue of sortedFileIssues) {
                     items.push({ type: 'issue', issue, file });
@@ -84,7 +84,6 @@ export function getIssueListItems(
 
 export const IssueListView = ({
     issues,
-    durationSecs,
     isTyping,
     scanProgress,
     state,
@@ -107,10 +106,7 @@ export const IssueListView = ({
     const isCramped = cols < 84 || rows < 24;
     const separatorWidth = Math.max(20, Math.min(cols - 2, 120));
     const contentWidth = Math.max(20, cols - 2);
-    const { items: listItems, categories } = useMemo(
-        () => getIssueListItems(issues, state),
-        [issues, state]
-    );
+    const { items: listItems, categories } = useMemo(() => getIssueListItems(issues, state), [issues, state]);
     const listItemsLengthRef = useRef(listItems.length);
     const truncateLabel = (label: string, maxWidth: number) => {
         if (label.length <= maxWidth) return label;
@@ -153,125 +149,142 @@ export const IssueListView = ({
 
         onStateChange((prev) => ({
             ...prev,
-            selectedIndex: direction === 'up'
-                ? (prev.selectedIndex <= 0 ? lastIndex : prev.selectedIndex - 1)
-                : (prev.selectedIndex >= lastIndex ? 0 : prev.selectedIndex + 1),
+            selectedIndex:
+                direction === 'up'
+                    ? prev.selectedIndex <= 0
+                        ? lastIndex
+                        : prev.selectedIndex - 1
+                    : prev.selectedIndex >= lastIndex
+                      ? 0
+                      : prev.selectedIndex + 1,
         }));
     }, listItems.length > 0);
 
-    useInput((input, key) => {
-        if (state.isFiltering) {
-            if (key.return || key.escape) {
-                onStateChange((prev) => ({ ...prev, isFiltering: false }));
-            }
-            return;
-        }
-
-        if (input === '/') {
-            onStateChange((prev) => ({ ...prev, isFiltering: true }));
-            return;
-        }
-
-        if (key.escape || key.leftArrow || input === 'b') {
-            onBack();
-            return;
-        }
-
-        if (input === 's') {
-            onStateChange((prev) => ({
-                ...prev,
-                sortMode: prev.sortMode === 'severity' ? 'file' : 'severity',
-                selectedIndex: 0,
-                startIndex: 0,
-            }));
-            return;
-        }
-
-        if (input === 't') {
-            onStateChange((prev) => {
-                const idx = prev.categoryFilter ? categories.indexOf(prev.categoryFilter) : -1;
-                return {
-                    ...prev,
-                    categoryFilter: idx === categories.length - 1 ? null : categories[idx + 1],
-                    selectedIndex: 0,
-                    startIndex: 0,
-                };
-            });
-            return;
-        }
-
-        if (input === 'o') {
-            const fileNames = [...new Set(issues.map((issue) => issue.file))];
-            const hasCollapsedFiles = fileNames.some((file) => state.collapsed[file] !== false);
-            onStateChange((prev) => ({
-                ...prev,
-                collapsed: {
-                    ...prev.collapsed,
-                    ...Object.fromEntries(fileNames.map((file) => [file, hasCollapsedFiles ? false : true])),
-                },
-                selectedIndex: 0,
-                startIndex: 0,
-            }));
-            return;
-        }
-
-        if (key.upArrow) {
-            if (!allowArrow('up')) return;
-            const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
-            onStateChange((prev) => ({
-                ...prev,
-                selectedIndex: prev.selectedIndex <= 0 ? lastIndex : prev.selectedIndex - 1,
-            }));
-        } else if (key.downArrow) {
-            if (!allowArrow('down')) return;
-            const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
-            onStateChange((prev) => ({
-                ...prev,
-                selectedIndex: prev.selectedIndex >= lastIndex ? 0 : prev.selectedIndex + 1,
-            }));
-        } else if (key.pageUp) {
-            onStateChange((prev) => ({ ...prev, selectedIndex: Math.max(0, prev.selectedIndex - limit) }));
-        } else if (key.pageDown) {
-            const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
-            onStateChange((prev) => ({ ...prev, selectedIndex: Math.min(lastIndex, prev.selectedIndex + limit) }));
-        } else if (key.home) {
-            onStateChange((prev) => ({ ...prev, selectedIndex: 0 }));
-        } else if (key.end) {
-            const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
-            onStateChange((prev) => ({ ...prev, selectedIndex: lastIndex }));
-        } else if (key.rightArrow) {
-            const item = listItems[state.selectedIndex];
-            if (!item) return;
-
-            if (item.type === 'file') {
-                if (item.isCollapsed) {
-                    onStateChange((prev) => ({
-                        ...prev,
-                        collapsed: { ...prev.collapsed, [item.file]: false },
-                    }));
-                } else {
-                    const nextIndex = state.selectedIndex + 1;
-                    if (nextIndex < listItemsLengthRef.current) {
-                        onStateChange((prev) => ({ ...prev, selectedIndex: nextIndex }));
-                    }
+    useInput(
+        (input, key) => {
+            if (state.isFiltering) {
+                if (key.return || key.escape) {
+                    onStateChange((prev) => ({ ...prev, isFiltering: false }));
                 }
-            } else {
-                onOpenIssue(item.issue);
+                return;
             }
-        } else if (key.return || input === ' ') {
-            const item = listItems[state.selectedIndex];
-            if (!item) return;
 
-            if (item.type === 'file') {
+            if (input === '/') {
+                onStateChange((prev) => ({ ...prev, isFiltering: true }));
+                return;
+            }
+
+            if (key.escape || key.leftArrow || input === 'b') {
+                onBack();
+                return;
+            }
+
+            if (input === 's') {
                 onStateChange((prev) => ({
                     ...prev,
-                    collapsed: { ...prev.collapsed, [item.file]: prev.collapsed[item.file] === false ? true : false },
+                    sortMode: prev.sortMode === 'severity' ? 'file' : 'severity',
+                    selectedIndex: 0,
+                    startIndex: 0,
                 }));
-            } else if (item.type === 'issue') {
-                onOpenIssue(item.issue);
+                return;
             }
-        }
-    }, { isActive: true });
+
+            if (input === 't') {
+                onStateChange((prev) => {
+                    const idx = prev.categoryFilter ? categories.indexOf(prev.categoryFilter) : -1;
+                    return {
+                        ...prev,
+                        categoryFilter: idx === categories.length - 1 ? null : categories[idx + 1],
+                        selectedIndex: 0,
+                        startIndex: 0,
+                    };
+                });
+                return;
+            }
+
+            if (input === 'o') {
+                const fileNames = [...new Set(issues.map((issue) => issue.file))];
+                const hasCollapsedFiles = fileNames.some((file) => state.collapsed[file] !== false);
+                onStateChange((prev) => ({
+                    ...prev,
+                    collapsed: {
+                        ...prev.collapsed,
+                        ...Object.fromEntries(fileNames.map((file) => [file, hasCollapsedFiles ? false : true])),
+                    },
+                    selectedIndex: 0,
+                    startIndex: 0,
+                }));
+                return;
+            }
+
+            if (key.upArrow) {
+                if (!allowArrow('up')) return;
+                const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
+                onStateChange((prev) => ({
+                    ...prev,
+                    selectedIndex: prev.selectedIndex <= 0 ? lastIndex : prev.selectedIndex - 1,
+                }));
+            } else if (key.downArrow) {
+                if (!allowArrow('down')) return;
+                const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
+                onStateChange((prev) => ({
+                    ...prev,
+                    selectedIndex: prev.selectedIndex >= lastIndex ? 0 : prev.selectedIndex + 1,
+                }));
+            } else if (key.pageUp) {
+                onStateChange((prev) => ({
+                    ...prev,
+                    selectedIndex: Math.max(0, prev.selectedIndex - limit),
+                }));
+            } else if (key.pageDown) {
+                const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
+                onStateChange((prev) => ({
+                    ...prev,
+                    selectedIndex: Math.min(lastIndex, prev.selectedIndex + limit),
+                }));
+            } else if (key.home) {
+                onStateChange((prev) => ({ ...prev, selectedIndex: 0 }));
+            } else if (key.end) {
+                const lastIndex = Math.max(0, listItemsLengthRef.current - 1);
+                onStateChange((prev) => ({ ...prev, selectedIndex: lastIndex }));
+            } else if (key.rightArrow) {
+                const item = listItems[state.selectedIndex];
+                if (!item) return;
+
+                if (item.type === 'file') {
+                    if (item.isCollapsed) {
+                        onStateChange((prev) => ({
+                            ...prev,
+                            collapsed: { ...prev.collapsed, [item.file]: false },
+                        }));
+                    } else {
+                        const nextIndex = state.selectedIndex + 1;
+                        if (nextIndex < listItemsLengthRef.current) {
+                            onStateChange((prev) => ({ ...prev, selectedIndex: nextIndex }));
+                        }
+                    }
+                } else {
+                    onOpenIssue(item.issue);
+                }
+            } else if (key.return || input === ' ') {
+                const item = listItems[state.selectedIndex];
+                if (!item) return;
+
+                if (item.type === 'file') {
+                    onStateChange((prev) => ({
+                        ...prev,
+                        collapsed: {
+                            ...prev.collapsed,
+                            [item.file]: prev.collapsed[item.file] === false ? true : false,
+                        },
+                    }));
+                } else if (item.type === 'issue') {
+                    onOpenIssue(item.issue);
+                }
+            }
+        },
+        { isActive: true },
+    );
 
     const visibleItems = listItems.slice(state.startIndex, state.startIndex + limit);
 
@@ -279,7 +292,9 @@ export const IssueListView = ({
         <Box flexDirection="column" paddingLeft={0} flexGrow={1}>
             {/* Header: CodeRabbit Style */}
             <Box flexDirection="row">
-                <Text bold color="white">Filter: </Text>
+                <Text bold color="white">
+                    Filter:{' '}
+                </Text>
                 {state.isFiltering ? (
                     <Text>
                         <TextInput
@@ -300,9 +315,7 @@ export const IssueListView = ({
                 <Text color="white">
                     Files / Issues <Text color="whiteBright">{issues.length} Potential Issues</Text>
                 </Text>
-                {isTyping && scanProgress && (
-                    <Text color="yellow">{truncateLabel(scanProgress, contentWidth)}</Text>
-                )}
+                {isTyping && scanProgress && <Text color="yellow">{truncateLabel(scanProgress, contentWidth)}</Text>}
             </Box>
 
             {/* List */}
@@ -316,7 +329,7 @@ export const IssueListView = ({
                         if (item.type === 'file') {
                             const label = truncateLabel(
                                 `${item.isCollapsed ? '▶' : '▼'} ${item.file} (${item.count} Potential Issues)`,
-                                Math.max(16, contentWidth - 2)
+                                Math.max(16, contentWidth - 2),
                             );
                             return (
                                 <Box key={`file-${globalIndex}-${item.file}`}>
@@ -328,8 +341,18 @@ export const IssueListView = ({
                                 </Box>
                             );
                         } else {
-                            const sevChar = item.issue.severity === 'critical' ? 'C' : item.issue.severity === 'warning' ? 'W' : 'I';
-                            const sevColor = item.issue.severity === 'critical' ? 'red' : item.issue.severity === 'warning' ? 'yellow' : 'blueBright';
+                            const sevChar =
+                                item.issue.severity === 'critical'
+                                    ? 'C'
+                                    : item.issue.severity === 'warning'
+                                      ? 'W'
+                                      : 'I';
+                            const sevColor =
+                                item.issue.severity === 'critical'
+                                    ? 'red'
+                                    : item.issue.severity === 'warning'
+                                      ? 'yellow'
+                                      : 'blueBright';
                             const title = truncateLabel(item.issue.title, Math.max(12, contentWidth - 9));
 
                             return (
@@ -365,19 +388,20 @@ export const IssueListView = ({
                         <>
                             <Box marginTop={1}>
                                 <Text color="whiteBright">
-                                    ↑↓ or mouse wheel navigate  ·  ←→ collapse/open  ·  PgUp/PgDn jump
+                                    ↑↓ or mouse wheel navigate · ←→ collapse/open · PgUp/PgDn jump
                                 </Text>
                             </Box>
                             <Box>
                                 <Text color="whiteBright">
-                                    Enter/Space select  ·  / filter  ·  Esc back  ·  Alt+C copy all
+                                    Enter/Space select · / filter · Esc back · Alt+C copy all
                                 </Text>
                             </Box>
                         </>
                     ) : (
                         <Box marginTop={1}>
                             <Text color="whiteBright">
-                                ↑↓ or mouse wheel navigate  ·  ←→ collapse/open  ·  PgUp/PgDn jump  ·  Enter/Space select  ·  / filter  ·  Esc back  ·  Alt+C copy all
+                                ↑↓ or mouse wheel navigate · ←→ collapse/open · PgUp/PgDn jump · Enter/Space select · /
+                                filter · Esc back · Alt+C copy all
                             </Text>
                         </Box>
                     )}
